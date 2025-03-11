@@ -536,11 +536,16 @@ class GitHubLangChainAnalyzer:
                     })
                     analysis_json = json.loads(analysis_result)
                     
-                    # Extract scores
-                    readability_score = analysis_json.get("readability", {}).get("score", 0)
-                    standards_score = analysis_json.get("standards", {}).get("score", 0)
-                    complexity_score = analysis_json.get("complexity", {}).get("score", 0)
-                    testing_score = analysis_json.get("testing", {}).get("score", 0)
+                    # Extract scores and reasoning
+                    readability = analysis_json.get("readability", {})
+                    standards = analysis_json.get("standards", {})
+                    complexity = analysis_json.get("complexity", {})
+                    testing = analysis_json.get("testing", {})
+                    
+                    readability_score = readability.get("score", 0) if isinstance(readability, dict) else 0
+                    standards_score = standards.get("score", 0) if isinstance(standards, dict) else 0
+                    complexity_score = complexity.get("score", 0) if isinstance(complexity, dict) else 0
+                    testing_score = testing.get("score", 0) if isinstance(testing, dict) else 0
                     
                     # Calculate weighted score
                     overall_score = (
@@ -700,11 +705,16 @@ class GitHubLangChainAnalyzer:
                     analysis_result = analysis_chain.invoke({"code_samples": code_sample_text})
                     analysis_json = json.loads(analysis_result)
                     
-                    # Extract scores
-                    readability_score = analysis_json.get("readability", {}).get("score", 0)
-                    standards_score = analysis_json.get("standards", {}).get("score", 0)
-                    complexity_score = analysis_json.get("complexity", {}).get("score", 0)
-                    testing_score = analysis_json.get("testing", {}).get("score", 0)
+                    # Extract scores and reasoning
+                    readability = analysis_json.get("readability", {})
+                    standards = analysis_json.get("standards", {})
+                    complexity = analysis_json.get("complexity", {})
+                    testing = analysis_json.get("testing", {})
+                    
+                    readability_score = readability.get("score", 0) if isinstance(readability, dict) else 0
+                    standards_score = standards.get("score", 0) if isinstance(standards, dict) else 0
+                    complexity_score = complexity.get("score", 0) if isinstance(complexity, dict) else 0
+                    testing_score = testing.get("score", 0) if isinstance(testing, dict) else 0
                     
                     # Calculate weighted score
                     overall_score = (
