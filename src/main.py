@@ -441,7 +441,7 @@ def main():
             f"\n{colors['green']}╔═════════════════════════════════════════════════════╗{colors['reset']}"
         )
         print(
-            f"{colors['green']}║ {colors['bold']}✅ ANALYSIS COMPLETED SUCCESSFULLY{colors['reset']}{colors['green']}                 ║{colors['reset']}"
+            f"{colors['green']}║ {colors['bold']}✅ ANALYSIS COMPLETED SUCCESSFULLY{colors['reset']}{colors['green']}                  ║{colors['reset']}"
         )
         print(
             f"{colors['green']}╚═════════════════════════════════════════════════════╝{colors['reset']}"

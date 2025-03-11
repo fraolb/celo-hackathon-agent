@@ -149,20 +149,33 @@ def run_with_active_spinner(
         # If no callback, just run the function directly
         return func(*args, **kwargs)
     
+    # Original message
+    original_message = message
+    
     # Initial spinner update
     if message:
         callback(f"{message}")
     
+    # Wrapper for the callback that preserves the context
+    def progress_update_wrapper(update_message):
+        # If the update is just the original message, ignore it
+        if update_message == original_message:
+            return
+        
+        # Forward the update to the actual callback
+        callback(update_message)
+    
     # Directly run the function
     start_time = time.time()
     try:
-        # Execute the function
+        # Execute the function - if the function takes a callback for progress updates,
+        # it will use our wrapper callback
         result = func(*args, **kwargs)
         
-        # Update spinner after completion
+        # Update spinner after completion only if there wasn't a final update from the function
         elapsed = time.time() - start_time
-        if message:
-            callback(f"{message} (completed in {elapsed:.1f}s)")
+        if message and original_message:
+            callback(f"{original_message} (completed in {elapsed:.1f}s)")
             
         return result
     except Exception as e:

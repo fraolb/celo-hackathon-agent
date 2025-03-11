@@ -168,10 +168,13 @@ class GitHubRepository:
             print(error_msg)
             raise GitHubAccessError(error_msg)
     
-    def collect_code_samples(self) -> Tuple[Dict[str, int], List[str]]:
+    def collect_code_samples(self, progress_callback=None) -> Tuple[Dict[str, int], List[str]]:
         """
         Collect code samples and file metrics from repository.
         
+        Args:
+            progress_callback: Optional callback for progress updates
+            
         Returns:
             Tuple of file metrics and code samples
         """
@@ -194,6 +197,11 @@ class GitHubRepository:
         # Maximum files to process to avoid excessive API calls
         max_files_to_process = 100
         files_processed = 0
+        last_update_time = 0
+        update_interval = 0.5  # Update progress every 0.5 seconds
+        
+        import time
+        start_time = time.time()
         
         # Process repository files
         while files_to_process and files_processed < max_files_to_process:
@@ -203,6 +211,12 @@ class GitHubRepository:
             
             processed_paths.add(content.path)
             files_processed += 1
+            
+            # Update progress periodically
+            current_time = time.time()
+            if progress_callback and (current_time - last_update_time) > update_interval:
+                last_update_time = current_time
+                progress_callback(f"Collecting code samples - processed {files_processed} files, found {len(code_samples)} code samples")
             
             if content.type == "dir":
                 try:
@@ -252,6 +266,11 @@ class GitHubRepository:
             "doc_file_count": doc_file_count,
             "code_files_analyzed": len(code_file_paths)
         }
+        
+        # Final progress update
+        if progress_callback:
+            elapsed = time.time() - start_time
+            progress_callback(f"Completed collecting {len(code_samples)} code samples from {file_count} files in {elapsed:.1f}s")
         
         return file_metrics, code_samples
         

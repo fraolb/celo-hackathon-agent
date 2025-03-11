@@ -185,6 +185,7 @@ class RepositoryAnalyzer:
                     # First collect code samples
                     file_metrics, code_samples = run_with_active_spinner(
                         func=self.github_repo.collect_code_samples,
+                        args=(callback,),  # Pass the callback to the function
                         message=f"Collecting code samples from {repo_owner}/{repo_name}",
                         callback=callback
                     )
