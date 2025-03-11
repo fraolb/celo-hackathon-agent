@@ -1,10 +1,18 @@
+"""
+GitHub Repository Analyzer
+
+This module provides functionality to analyze GitHub repositories for code quality
+and Celo blockchain integration using the GitHub API and LangChain AI analysis.
+"""
+
 import os
 import json
 import base64
 import re
 import time
 import threading
-from typing import Dict, List, Tuple, Any, Optional
+from typing import Dict, List, Tuple, Any, Optional, TypedDict, Union
+from dataclasses import dataclass
 from dotenv import load_dotenv
 from pathlib import Path
 import signal
@@ -13,13 +21,6 @@ import signal
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_anthropic import ChatAnthropic
 from langchain_core.output_parsers import StrOutputParser
-from langchain.chains import create_retrieval_chain
-from langchain.chains.combine_documents import create_stuff_documents_chain
-
-# LangChain GitHub toolkit imports
-from langchain_community.agent_toolkits.github.toolkit import GitHubToolkit
-from langchain_community.utilities.github import GitHubAPIWrapper
-from langgraph.prebuilt import create_react_agent
 
 # Import prompt templates
 from prompts.code_quality import CODE_QUALITY_PROMPT, HUMAN_CODE_QUALITY_PROMPT
@@ -33,20 +34,116 @@ from prompts.celo_integration import (
 # Load environment variables
 load_dotenv()
 
+# Type Definitions
+class RepoDetails(TypedDict):
+    """Repository details type definition"""
+    name: str
+    description: str
+    url: str
+    stars: int
+    forks: int
+    open_issues: int
+    last_update: str
+    language: str
 
-# Timeout decorator
+class CodeQualityScores(TypedDict):
+    """Code quality scores type definition"""
+    overall_score: float
+    readability: float
+    standards: float
+    complexity: float
+    testing: float
+
+class CodeQualityMetrics(TypedDict):
+    """Code quality metrics type definition"""
+    file_count: int
+    test_file_count: int
+    doc_file_count: int
+    code_files_analyzed: int
+    code_lines: Optional[int]
+    comment_lines: Optional[int]
+
+class AIAnalysis(TypedDict):
+    """AI analysis details type definition"""
+    overall_analysis: str
+    suggestions: List[str]
+    readability_reasoning: str
+    standards_reasoning: str
+    complexity_reasoning: str
+    testing_reasoning: str
+
+class CodeQualityResult(TypedDict):
+    """Complete code quality analysis result"""
+    overall_score: float
+    readability: float
+    standards: float
+    complexity: float
+    testing: float
+    ai_analysis: Optional[AIAnalysis]
+    metrics: CodeQualityMetrics
+    repositories_analyzed: Optional[int]
+    note: Optional[str]
+    error: Optional[str]
+
+class CeloEvidence(TypedDict):
+    """Evidence of Celo integration"""
+    file: str
+    keyword: str
+    repository: Optional[str]
+
+class CeloIntegrationResult(TypedDict):
+    """Celo integration analysis result"""
+    integrated: bool
+    evidence: List[CeloEvidence]
+    analysis: Optional[str]
+    repositories_with_celo: Optional[int]
+    error: Optional[str]
+
+class RepositoryAnalysisResult(TypedDict):
+    """Complete repository analysis result"""
+    repo_details: RepoDetails
+    code_quality: CodeQualityResult
+    celo_integration: CeloIntegrationResult
+    error: Optional[str]
+
+
+# Exception classes
 class TimeoutError(Exception):
+    """Raised when a function execution times out."""
+    pass
+
+class GitHubAccessError(Exception):
+    """Raised when there's an issue accessing the GitHub API."""
+    pass
+
+class AIAnalysisError(Exception):
+    """Raised when there's an issue with AI-based analysis."""
+    pass
+
+class RepositoryAnalysisError(Exception):
+    """Raised when there's an issue analyzing a repository."""
     pass
 
 
+# Utility functions
 def timeout_handler(signum, frame):
+    """Signal handler for function timeouts."""
     raise TimeoutError("Function execution timed out")
 
 
-def with_timeout(seconds):
+def with_timeout(seconds: int):
+    """
+    Decorator to add timeout functionality to functions.
+    
+    Args:
+        seconds: Number of seconds before timing out
+        
+    Returns:
+        Decorated function with timeout capability
+    """
     def decorator(func):
         def wrapper(*args, **kwargs):
-            # Set the timeout handler
+            # Set the timeout handler (only works on Unix systems)
             signal.signal(signal.SIGALRM, timeout_handler)
             signal.alarm(seconds)
             try:
@@ -64,7 +161,7 @@ def with_timeout(seconds):
 
 def run_with_active_spinner(func, args=(), kwargs={}, message=None, callback=None, update_interval=0.2):
     """
-    Run a function with periodic spinner updates without using threads.
+    Run a function while updating a spinner/progress indicator.
     
     Args:
         func: Function to run
@@ -88,8 +185,7 @@ def run_with_active_spinner(func, args=(), kwargs={}, message=None, callback=Non
     # Directly run the function
     start_time = time.time()
     try:
-        # For functions that might take a long time, we can't do much without threading
-        # Just run the function and let the spinner animation happen before and after
+        # Execute the function
         result = func(*args, **kwargs)
         
         # Update spinner after completion
@@ -106,8 +202,48 @@ def run_with_active_spinner(func, args=(), kwargs={}, message=None, callback=Non
         raise e
 
 
+@dataclass
+class Config:
+    """Configuration for the repository analyzer."""
+    weights: Dict[str, float]
+    celo_keywords: List[str]
+    celo_files: List[str]
+    github_token: str
+    model_name: str = "claude-3-haiku-20240307"
+    temperature: float = 0.1
+    
+    @classmethod
+    def from_file(cls, config_path: str = "config.json") -> 'Config':
+        """
+        Load configuration from a JSON file.
+        
+        Args:
+            config_path: Path to the configuration file
+            
+        Returns:
+            Config object with loaded settings
+        """
+        with open(config_path, 'r') as f:
+            config_data = json.load(f)
+            
+        # Get GitHub token from environment or config
+        github_token = os.environ.get("GITHUB_TOKEN") or config_data.get("github_token", "")
+        
+        return cls(
+            weights=config_data["weights"],
+            celo_keywords=config_data["celo_keywords"],
+            celo_files=config_data["celo_files"],
+            github_token=github_token
+        )
+
+
 class GitHubLangChainAnalyzer:
-    """Class to analyze GitHub repositories for code quality and Celo integration using LangChain's GitHub toolkit."""
+    """
+    Analyzes GitHub repositories for code quality and Celo blockchain integration.
+    
+    This class combines GitHub API access, code analysis, and AI-powered evaluation
+    to provide insights into repository quality and Celo integration.
+    """
     
     def __init__(self, config_path: str = "config.json"):
         """
@@ -117,17 +253,9 @@ class GitHubLangChainAnalyzer:
             config_path: Path to the configuration file
         """
         # Load configuration
-        with open(config_path, 'r') as f:
-            self.config = json.load(f)
-            
-        # Set up analysis parameters
-        self.weights = self.config["weights"]
-        self.celo_keywords = self.config["celo_keywords"]
-        self.celo_files = self.config["celo_files"]
+        self.config = Config.from_file(config_path)
         
-        # Set up GitHub token from environment or config
-        self.github_token = os.environ.get("GITHUB_TOKEN") or self.config.get("github_token", "")
-        if not self.github_token:
+        if not self.config.github_token:
             print("Warning: No GitHub token found. API rate limits may apply.")
         
         # Set up Anthropic model
@@ -140,25 +268,31 @@ class GitHubLangChainAnalyzer:
         if self.anthropic_api_key:
             try:
                 self.llm = ChatAnthropic(
-                    model="claude-3-haiku-20240307",
-                    temperature=0.1,
+                    model=self.config.model_name,
+                    temperature=self.config.temperature,
                     anthropic_api_key=self.anthropic_api_key
                 )
             except Exception as e:
                 print(f"Error initializing Claude model: {str(e)}")
                 print("Using fallback analysis methods only.")
         
-        # Initialize GitHub toolkit
-        self.github_api = None
-        self.github_toolkit = None
-        self.github_agent = None
+        # Initialize GitHub repository references
+        self.repo = None
+        self.repo_owner = None
+        self.repo_name = None
         
-    def _setup_github_tools(self, repo_url: str):
+    def _parse_github_url(self, repo_url: str) -> Tuple[str, str]:
         """
-        Set up GitHub tools with the correct repository.
+        Parse a GitHub URL to extract owner and repository name.
         
         Args:
             repo_url: URL of the GitHub repository
+            
+        Returns:
+            Tuple of repository owner and name
+            
+        Raises:
+            ValueError: If the URL is not a valid GitHub repository URL
         """
         # Extract repo owner and name from URL
         repo_parts = repo_url.strip("/").split("/")
@@ -168,20 +302,29 @@ class GitHubLangChainAnalyzer:
         repo_owner = repo_parts[-2]
         repo_name = repo_parts[-1]
         
-        # If we have no token, we can still use some repository information
-        if not self.github_token:
+        return repo_owner, repo_name
+    
+    def _connect_to_github_api(self, repo_owner: str, repo_name: str) -> Any:
+        """
+        Connect to GitHub API and get repository object.
+        
+        Args:
+            repo_owner: Owner of the repository
+            repo_name: Name of the repository
+            
+        Returns:
+            GitHub repository object or None if connection fails
+        """
+        if not self.config.github_token:
             print(f"No GitHub token provided. Using limited repository information for {repo_owner}/{repo_name}")
-            self.repo = None
-            self.repo_owner = repo_owner
-            self.repo_name = repo_name
-            return repo_owner, repo_name
+            return None
         
         # If we have a token, use PyGithub for direct access
         try:
             from github import Github
             
             # Initialize GitHub client
-            g = Github(self.github_token)
+            g = Github(self.config.github_token)
             
             # Get repository
             repo = g.get_repo(f"{repo_owner}/{repo_name}")
@@ -189,38 +332,126 @@ class GitHubLangChainAnalyzer:
             # Simple check if repository exists and is accessible
             _ = repo.name
             
-            # Repository is accessible, store it for later use
-            self.repo = repo
-            self.repo_owner = repo_owner
-            self.repo_name = repo_name
-            return repo_owner, repo_name
+            return repo
             
         except Exception as e:
-            print(f"Error accessing repository: {str(e)}")
-            # Return basic information even if authentication fails
-            self.repo = None
-            self.repo_owner = repo_owner
-            self.repo_name = repo_name
-            return repo_owner, repo_name
-            
-    def _analyze_repository_manually(self, repo):
+            error_msg = f"Error accessing repository {repo_owner}/{repo_name}: {str(e)}"
+            print(error_msg)
+            raise GitHubAccessError(error_msg)
+    
+    def _setup_github_tools(self, repo_url: str) -> Tuple[str, str]:
         """
-        Analyze a repository manually using PyGithub.
+        Set up GitHub tools with the correct repository.
         
         Args:
-            repo: GitHub repository object
+            repo_url: URL of the GitHub repository
             
         Returns:
             Tuple of repository owner and name
         """
-        # Store repo information
-        self.repo = repo
-        self.repo_owner = repo.owner.login
-        self.repo_name = repo.name
+        # Parse GitHub URL to get owner and name
+        repo_owner, repo_name = self._parse_github_url(repo_url)
         
-        return self.repo_owner, self.repo_name
+        try:
+            # Connect to GitHub API and get repository object
+            self.repo = self._connect_to_github_api(repo_owner, repo_name)
+        except GitHubAccessError:
+            # If we can't access the repository, set repo to None
+            self.repo = None
         
-    def analyze_repository(self, repo_url: str, callback=None) -> Dict[str, Any]:
+        # Store repository info regardless of API success
+        self.repo_owner = repo_owner
+        self.repo_name = repo_name
+        
+        return repo_owner, repo_name
+        
+    def _create_fallback_repo_details(self, repo_owner: str, repo_name: str, repo_url: str) -> RepoDetails:
+        """
+        Create fallback repository details when repository access fails.
+        
+        Args:
+            repo_owner: Owner of the repository
+            repo_name: Name of the repository
+            repo_url: URL of the repository
+            
+        Returns:
+            RepoDetails with basic information
+        """
+        return {
+            "name": repo_name,
+            "description": f"Repository for {repo_owner}/{repo_name}",
+            "url": repo_url,
+            "stars": 0,
+            "forks": 0,
+            "open_issues": 0,
+            "last_update": "",
+            "language": ""
+        }
+    
+    def _create_fallback_code_quality(self, error_message: str = None) -> CodeQualityResult:
+        """
+        Create fallback code quality results when analysis fails.
+        
+        Args:
+            error_message: Optional error message
+            
+        Returns:
+            CodeQualityResult with fallback values
+        """
+        # Use a reasonable default score
+        base_score = 75 
+        
+        result = {
+            "overall_score": base_score,
+            "readability": base_score,
+            "standards": base_score,
+            "complexity": base_score,
+            "testing": base_score,
+            "metrics": {
+                "file_count": 0,
+                "test_file_count": 0,
+                "doc_file_count": 0,
+                "code_files_analyzed": 0
+            },
+            "repositories_analyzed": 1
+        }
+        
+        if error_message:
+            result["note"] = f"Used fallback quality estimation: {error_message}"
+            
+        return result
+    
+    def _create_fallback_celo_integration(self, repo_name: str, error_message: str = None) -> CeloIntegrationResult:
+        """
+        Create fallback Celo integration results when analysis fails.
+        
+        Args:
+            repo_name: Name of the repository
+            error_message: Optional error message
+            
+        Returns:
+            CeloIntegrationResult with fallback assessment
+        """
+        # Simple heuristic - check if repository name contains "celo"
+        has_celo_in_name = "celo" in repo_name.lower()
+        
+        # Create evidence if needed
+        evidence = []
+        if has_celo_in_name:
+            evidence = [{"file": "Repository name", "keyword": "celo"}]
+        
+        result = {
+            "integrated": has_celo_in_name,
+            "evidence": evidence,
+            "repositories_with_celo": 1 if has_celo_in_name else 0
+        }
+        
+        if error_message:
+            result["note"] = f"Used fallback integration detection: {error_message}"
+            
+        return result
+    
+    def analyze_repository(self, repo_url: str, callback=None) -> RepositoryAnalysisResult:
         """
         Analyze a GitHub repository for code quality and Celo integration.
         
@@ -229,170 +460,23 @@ class GitHubLangChainAnalyzer:
             callback: Optional callback function to report progress
             
         Returns:
-            Dictionary containing analysis results
+            RepositoryAnalysisResult containing analysis results
         """
         try:
-            # Setup GitHub toolkit and get repo information
+            # Setup GitHub access and get repo information
             if callback:
                 callback(f"Setting up GitHub tools for {repo_url}")
             
             repo_owner, repo_name = self._setup_github_tools(repo_url)
             
-            # Get repository details (timeout: 30 seconds)
-            if callback:
-                callback(f"Fetching repository details for {repo_owner}/{repo_name}")
-                
-                # Run repository details fetch with active spinner
-                try:
-                    repo_details = run_with_active_spinner(
-                        func=self._get_repository_details_with_timeout,
-                        args=(repo_owner, repo_name),
-                        message=f"Fetching repository details for {repo_owner}/{repo_name}",
-                        callback=callback
-                    )
-                except Exception as e:
-                    # Handle API or connection errors
-                    error_message = str(e)
-                    callback(f"Error fetching repository details: {error_message}")
-                    
-                    # Use fallback repository details
-                    repo_details = {
-                        "name": repo_name,
-                        "description": f"Repository for {repo_owner}/{repo_name}",
-                        "url": f"https://github.com/{repo_owner}/{repo_name}",
-                        "stars": 0,
-                        "forks": 0,
-                        "open_issues": 0,
-                        "last_update": "",
-                        "language": ""
-                    }
-            else:
-                repo_details = self._get_repository_details_with_timeout(repo_owner, repo_name)
-            if repo_details is None:
-                repo_details = {
-                    "name": repo_name,
-                    "description": f"Repository for {repo_owner}/{repo_name}",
-                    "url": repo_url,
-                    "stars": 0,
-                    "forks": 0,
-                    "open_issues": 0,
-                    "last_update": "",
-                    "language": ""
-                }
+            # Step 1: Get repository details
+            repo_details = self._get_repository_details_safely(repo_owner, repo_name, repo_url, callback)
             
-            # Analyze code quality using LangChain and Anthropic (timeout: 60 seconds) with continuous spinner updates
-            if callback:
-                callback(f"Analyzing code quality for {repo_owner}/{repo_name}")
-                
-                # Run code quality analysis with active spinner
-                try:
-                    code_quality = run_with_active_spinner(
-                        func=self._analyze_code_quality_with_timeout,
-                        args=(repo_owner, repo_name),
-                        message=f"Analyzing code quality for {repo_owner}/{repo_name}",
-                        callback=callback
-                    )
-                except Exception as e:
-                    # Handle API overload or other errors
-                    error_message = str(e)
-                    callback(f"API error during code quality analysis: {error_message}")
-                    
-                    # Use a simple fallback for code quality estimation
-                    # Use a standard score for all repos when API is unavailable
-                    base_score = 75  # Neutral default score for all repositories
-                    
-                    code_quality = {
-                        "overall_score": base_score,
-                        "readability": base_score,
-                        "standards": base_score,
-                        "complexity": base_score,
-                        "testing": base_score,
-                        "metrics": {
-                            "file_count": 0,
-                            "test_file_count": 0,
-                            "doc_file_count": 0
-                        },
-                        "api_error": error_message,
-                        "note": "Used fallback quality estimation due to API error: " + error_message
-                    }
-            else:
-                code_quality = self._analyze_code_quality_with_timeout(repo_owner, repo_name)
-            if code_quality is None:
-                code_quality = {
-                    "overall_score": 50,
-                    "readability": 50,
-                    "standards": 50,
-                    "complexity": 50,
-                    "testing": 50,
-                    "metrics": {
-                        "file_count": 0,
-                        "test_file_count": 0,
-                        "doc_file_count": 0
-                    },
-                    "error": "Analysis timed out"
-                }
+            # Step 2: Analyze code quality
+            code_quality = self._analyze_code_quality_safely(repo_owner, repo_name, callback)
             
-            # Check for Celo integration (timeout: 60 seconds) with continuous spinner updates
-            if callback:
-                callback(f"Checking Celo integration for {repo_owner}/{repo_name}")
-                
-                # Run Celo integration check with active spinner
-                try:
-                    celo_integration = run_with_active_spinner(
-                        func=self._check_celo_integration_with_timeout,
-                        args=(repo_owner, repo_name),
-                        message=f"Checking Celo integration for {repo_owner}/{repo_name}",
-                        callback=callback
-                    )
-                except Exception as e:
-                    # Handle API overload or other errors
-                    error_message = str(e)
-                    callback(f"API error: {error_message}")
-                    
-                    # Look for evidence of Celo integration in repo name/description only
-                    # This is less likely to have false positives than checking repo owner
-                    has_celo_in_name = "celo" in repo_name.lower()
-                    
-                    # Only mark as integrated if we find strong evidence
-                    is_integrated = has_celo_in_name
-                    
-                    # Create appropriate evidence entry if we found Celo in name
-                    evidence = []
-                    if has_celo_in_name:
-                        evidence = [
-                            {
-                                "file": "Repository name",
-                                "keyword": "celo"
-                            }
-                        ]
-                    
-                    celo_integration = {
-                        "integrated": is_integrated,
-                        "evidence": evidence,
-                        "analysis": "Analysis used fallback method due to API error: " + error_message,
-                        "api_error": error_message
-                    }
-            else:
-                celo_integration = self._check_celo_integration_with_timeout(repo_owner, repo_name)
-            if celo_integration is None:
-                # If analysis timed out, use a neutral fallback based on name only
-                has_celo_in_name = "celo" in repo_name.lower()
-                
-                # Create appropriate evidence entry if we found Celo in name
-                evidence = []
-                if has_celo_in_name:
-                    evidence = [
-                        {
-                            "file": "Repository name",
-                            "keyword": "celo"
-                        }
-                    ]
-                    
-                celo_integration = {
-                    "integrated": has_celo_in_name,
-                    "evidence": evidence,
-                    "error": "Analysis timed out"
-                }
+            # Step 3: Check for Celo integration
+            celo_integration = self._check_celo_integration_safely(repo_owner, repo_name, callback)
             
             # Compile results
             if callback:
@@ -417,9 +501,127 @@ class GitHubLangChainAnalyzer:
                 
             return {
                 "error": error_message,
-                "code_quality": 0,
-                "celo_integration": False
+                "repo_details": self._create_fallback_repo_details(
+                    repo_owner=repo_url.split('/')[-2] if 'github.com' in repo_url else "unknown",
+                    repo_name=repo_url.split('/')[-1] if 'github.com' in repo_url else "unknown",
+                    repo_url=repo_url
+                ),
+                "code_quality": self._create_fallback_code_quality(error_message),
+                "celo_integration": self._create_fallback_celo_integration(
+                    repo_name=repo_url.split('/')[-1] if 'github.com' in repo_url else "unknown",
+                    error_message=error_message
+                )
             }
+    
+    def _get_repository_details_safely(self, repo_owner: str, repo_name: str, repo_url: str, callback=None) -> RepoDetails:
+        """
+        Safely get repository details with error handling and fallback.
+        
+        Args:
+            repo_owner: Owner of the repository
+            repo_name: Name of the repository
+            repo_url: URL of the repository
+            callback: Optional callback function for progress updates
+            
+        Returns:
+            RepoDetails with repository information
+        """
+        # Get repository details with timeout
+        if callback:
+            callback(f"Fetching repository details for {repo_owner}/{repo_name}")
+            
+            try:
+                repo_details = run_with_active_spinner(
+                    func=self._get_repository_details_with_timeout,
+                    args=(repo_owner, repo_name),
+                    message=f"Fetching repository details for {repo_owner}/{repo_name}",
+                    callback=callback
+                )
+            except Exception as e:
+                # Handle API or connection errors
+                error_message = str(e)
+                callback(f"Error fetching repository details: {error_message}")
+                repo_details = None
+        else:
+            repo_details = self._get_repository_details_with_timeout(repo_owner, repo_name)
+        
+        # If details couldn't be retrieved, use fallback
+        if repo_details is None:
+            return self._create_fallback_repo_details(repo_owner, repo_name, repo_url)
+        
+        return repo_details
+    
+    def _analyze_code_quality_safely(self, repo_owner: str, repo_name: str, callback=None) -> CodeQualityResult:
+        """
+        Safely analyze code quality with error handling and fallback.
+        
+        Args:
+            repo_owner: Owner of the repository
+            repo_name: Name of the repository
+            callback: Optional callback function for progress updates
+            
+        Returns:
+            CodeQualityResult with analysis results
+        """
+        if callback:
+            callback(f"Analyzing code quality for {repo_owner}/{repo_name}")
+            
+            try:
+                code_quality = run_with_active_spinner(
+                    func=self._analyze_code_quality_with_timeout,
+                    args=(repo_owner, repo_name),
+                    message=f"Analyzing code quality for {repo_owner}/{repo_name}",
+                    callback=callback
+                )
+            except Exception as e:
+                # Handle API overload or other errors
+                error_message = str(e)
+                callback(f"API error during code quality analysis: {error_message}")
+                return self._create_fallback_code_quality(error_message)
+        else:
+            code_quality = self._analyze_code_quality_with_timeout(repo_owner, repo_name)
+        
+        # Handle timeout or error cases
+        if code_quality is None:
+            return self._create_fallback_code_quality("Analysis timed out")
+        
+        return code_quality
+    
+    def _check_celo_integration_safely(self, repo_owner: str, repo_name: str, callback=None) -> CeloIntegrationResult:
+        """
+        Safely check Celo integration with error handling and fallback.
+        
+        Args:
+            repo_owner: Owner of the repository
+            repo_name: Name of the repository
+            callback: Optional callback function for progress updates
+            
+        Returns:
+            CeloIntegrationResult with analysis results
+        """
+        if callback:
+            callback(f"Checking Celo integration for {repo_owner}/{repo_name}")
+            
+            try:
+                celo_integration = run_with_active_spinner(
+                    func=self._check_celo_integration_with_timeout,
+                    args=(repo_owner, repo_name),
+                    message=f"Checking Celo integration for {repo_owner}/{repo_name}",
+                    callback=callback
+                )
+            except Exception as e:
+                # Handle API overload or other errors
+                error_message = str(e)
+                callback(f"API error: {error_message}")
+                return self._create_fallback_celo_integration(repo_name, error_message)
+        else:
+            celo_integration = self._check_celo_integration_with_timeout(repo_owner, repo_name)
+        
+        # Handle timeout or error cases
+        if celo_integration is None:
+            return self._create_fallback_celo_integration(repo_name, "Analysis timed out")
+        
+        return celo_integration
     
     @with_timeout(30)
     def _get_repository_details_with_timeout(self, repo_owner: str, repo_name: str) -> Dict[str, Any]:
@@ -427,16 +629,16 @@ class GitHubLangChainAnalyzer:
         return self._get_repository_details(repo_owner, repo_name)
         
     @with_timeout(60)
-    def _analyze_code_quality_with_timeout(self, repo_owner: str, repo_name: str) -> Dict[str, Any]:
+    def _analyze_code_quality_with_timeout(self, repo_owner: str, repo_name: str) -> CodeQualityResult:
         """Timeout wrapper for _analyze_code_quality"""
         return self._analyze_code_quality(repo_owner, repo_name)
         
     @with_timeout(60)
-    def _check_celo_integration_with_timeout(self, repo_owner: str, repo_name: str) -> Dict[str, Any]:
+    def _check_celo_integration_with_timeout(self, repo_owner: str, repo_name: str) -> CeloIntegrationResult:
         """Timeout wrapper for _check_celo_integration"""
         return self._check_celo_integration(repo_owner, repo_name)
         
-    def _get_repository_details(self, repo_owner: str, repo_name: str) -> Dict[str, Any]:
+    def _get_repository_details(self, repo_owner: str, repo_name: str) -> RepoDetails:
         """
         Get repository details using PyGithub.
         
@@ -445,23 +647,15 @@ class GitHubLangChainAnalyzer:
             repo_name: Name of the repository
             
         Returns:
-            Dictionary containing repository details
+            RepoDetails with repository information
         """
-        # Fallback values if we can't access the repository
-        fallback_info = {
-            "name": repo_name,
-            "description": "",
-            "url": f"https://github.com/{repo_owner}/{repo_name}",
-            "stars": 0,
-            "forks": 0,
-            "open_issues": 0,
-            "last_update": "",
-            "language": ""
-        }
-        
         # If we don't have the repo object, return fallback info
         if self.repo is None:
-            return fallback_info
+            return self._create_fallback_repo_details(
+                repo_owner, 
+                repo_name, 
+                f"https://github.com/{repo_owner}/{repo_name}"
+            )
         
         try:
             # Get repository details directly
@@ -479,299 +673,422 @@ class GitHubLangChainAnalyzer:
             return repo_info
             
         except Exception as e:
-            print(f"Error getting repository details: {str(e)}")
-            return fallback_info
+            error_msg = f"Error getting repository details: {str(e)}"
+            print(error_msg)
+            raise GitHubAccessError(error_msg)
             
-    def _analyze_code_quality(self, repo_owner: str, repo_name: str) -> Dict[str, Any]:
+    def _analyze_code_quality(self, repo_owner: str, repo_name: str) -> CodeQualityResult:
         """
-        Analyze the code quality of a repository using PyGithub and Anthropic.
+        Analyze the code quality of a repository using GitHub API and AI assistance.
         
         Args:
             repo_owner: Owner of the repository
             repo_name: Name of the repository
             
         Returns:
-            Dictionary containing code quality scores
+            CodeQualityResult with analysis data
         """
-        # If we don't have access to the repository, use alternative methods
+        # Choose analysis method based on repository access
         if self.repo is None:
-            # Get basic repository info
-            repo_info = self._get_repository_details(repo_owner, repo_name)
+            return self._analyze_code_quality_without_access(repo_owner, repo_name)
+        else:
+            return self._analyze_code_quality_with_access(repo_owner, repo_name)
+    
+    def _analyze_code_quality_without_access(self, repo_owner: str, repo_name: str) -> CodeQualityResult:
+        """
+        Analyze code quality without direct repository access.
+        
+        Args:
+            repo_owner: Owner of the repository
+            repo_name: Name of the repository
             
-            # If we have a working LLM, use it for estimation
-            if self.llm is not None:
-                # Create a prompt asking for a rough estimate based on repository name and metadata
-                quality_prompt = ChatPromptTemplate.from_template(
-                    """You are a senior software engineer tasked with making a rough estimate of a GitHub repository's code quality.
-                    Based on the limited information provided about the repository (name, organization, description), 
-                    provide a reasonable estimate of what the code quality might be like.
-                    
-                    Repository: {repo_owner}/{repo_name}
-                    Description: {repo_description}
-                    
-                    I don't have direct access to the code, so please make an educated guess based on the repository name,
-                    owner, and any other information you might know about this project. If you've heard of this repository
-                    before, you can use that knowledge.
-                    
-                    Respond in JSON format:
-                    {{
-                        "readability": {{"score": 0-100, "reasoning": "explanation"}},
-                        "standards": {{"score": 0-100, "reasoning": "explanation"}},
-                        "complexity": {{"score": 0-100, "reasoning": "explanation"}},
-                        "testing": {{"score": 0-100, "reasoning": "explanation"}},
-                        "overall_analysis": "brief overall analysis",
-                        "suggestions": ["suggestion1", "suggestion2"]
-                    }}
-                    """
-                )
-                
-                # Run analysis with Anthropic model
-                analysis_chain = quality_prompt | self.llm | StrOutputParser()
-                
+        Returns:
+            CodeQualityResult with estimated quality
+        """
+        # Get basic repository information
+        repo_info = self._get_repository_details(repo_owner, repo_name)
+        
+        # Try AI-based estimation if available
+        if self.llm is not None:
+            try:
+                return self._estimate_quality_with_ai(repo_owner, repo_name, repo_info)
+            except Exception as e:
+                print(f"Error in AI estimation of code quality: {str(e)}")
+                # Fall through to heuristic analysis on failure
+        
+        # Use heuristic analysis as fallback
+        return self._estimate_quality_with_heuristics(repo_owner, repo_name)
+    
+    def _estimate_quality_with_ai(self, repo_owner: str, repo_name: str, repo_info: RepoDetails) -> CodeQualityResult:
+        """
+        Estimate code quality using AI based on repository metadata.
+        
+        Args:
+            repo_owner: Owner of the repository
+            repo_name: Name of the repository
+            repo_info: Repository details
+            
+        Returns:
+            CodeQualityResult with AI-based quality estimation
+        """
+        # Create a prompt for the AI model
+        quality_prompt = ChatPromptTemplate.from_template(
+            """You are a senior software engineer tasked with making a rough estimate of a GitHub repository's code quality.
+            Based on the limited information provided about the repository (name, organization, description), 
+            provide a reasonable estimate of what the code quality might be like.
+            
+            Repository: {repo_owner}/{repo_name}
+            Description: {repo_description}
+            
+            I don't have direct access to the code, so please make an educated guess based on the repository name,
+            owner, and any other information you might know about this project. If you've heard of this repository
+            before, you can use that knowledge.
+            
+            Respond in JSON format:
+            {{
+                "readability": {{"score": 0-100, "reasoning": "explanation"}},
+                "standards": {{"score": 0-100, "reasoning": "explanation"}},
+                "complexity": {{"score": 0-100, "reasoning": "explanation"}},
+                "testing": {{"score": 0-100, "reasoning": "explanation"}},
+                "overall_analysis": "brief overall analysis",
+                "suggestions": ["suggestion1", "suggestion2"]
+            }}
+            """
+        )
+        
+        # Run analysis with the AI model
+        analysis_chain = quality_prompt | self.llm | StrOutputParser()
+        analysis_result = analysis_chain.invoke({
+            "repo_owner": repo_owner,
+            "repo_name": repo_name,
+            "repo_description": repo_info.get("description", "")
+        })
+        
+        # Parse the AI response
+        analysis_json = json.loads(analysis_result)
+        
+        # Extract scores and reasoning from AI response
+        readability = analysis_json.get("readability", {})
+        standards = analysis_json.get("standards", {})
+        complexity = analysis_json.get("complexity", {})
+        testing = analysis_json.get("testing", {})
+        
+        readability_score = readability.get("score", 0) if isinstance(readability, dict) else 0
+        standards_score = standards.get("score", 0) if isinstance(standards, dict) else 0
+        complexity_score = complexity.get("score", 0) if isinstance(complexity, dict) else 0
+        testing_score = testing.get("score", 0) if isinstance(testing, dict) else 0
+        
+        # Calculate weighted score
+        overall_score = self._calculate_weighted_score(
+            readability_score, standards_score, complexity_score, testing_score
+        )
+        
+        # Compile and return the results
+        return {
+            "overall_score": round(overall_score, 2),
+            "readability": readability_score,
+            "standards": standards_score,
+            "complexity": complexity_score,
+            "testing": testing_score,
+            "ai_analysis": {
+                "overall_analysis": analysis_json.get("overall_analysis", "") + " (Note: This is an estimate based on limited information)",
+                "suggestions": analysis_json.get("suggestions", []),
+                "readability_reasoning": readability.get("reasoning", ""),
+                "standards_reasoning": standards.get("reasoning", ""),
+                "complexity_reasoning": complexity.get("reasoning", ""),
+                "testing_reasoning": testing.get("reasoning", "")
+            },
+            "metrics": {
+                "file_count": 0,
+                "test_file_count": 0,
+                "doc_file_count": 0,
+                "code_files_analyzed": 0
+            },
+            "repositories_analyzed": 1,
+            "note": "This analysis is based on AI estimation as direct repository access was not available."
+        }
+    
+    def _estimate_quality_with_heuristics(self, repo_owner: str, repo_name: str) -> CodeQualityResult:
+        """
+        Estimate code quality using heuristics based on repository name and owner.
+        
+        Args:
+            repo_owner: Owner of the repository
+            repo_name: Name of the repository
+            
+        Returns:
+            CodeQualityResult with heuristic-based quality estimation
+        """
+        repo_name_lower = repo_name.lower()
+        repo_owner_lower = repo_owner.lower()
+        
+        # Simple heuristic based on repository name and owner
+        quality_indicators = ["awesome", "framework", "official", "production", "stable"]
+        quality_score = 0
+        
+        # Check for quality indicators in name and owner
+        for indicator in quality_indicators:
+            if indicator in repo_name_lower or indicator in repo_owner_lower:
+                quality_score += 15
+        
+        # Apply premium for well-known organizations
+        premium_orgs = ["microsoft", "google", "facebook", "apple", "amazon", "celo-org"]
+        if repo_owner_lower in premium_orgs:
+            quality_score += 30
+            
+        # Cap at 85 - we can't give a perfect score without seeing the code
+        quality_score = min(85, quality_score)
+        
+        # If we found no indicators, give a baseline score
+        if quality_score == 0:
+            quality_score = 50
+        
+        # Return consistent result structure
+        return {
+            "overall_score": quality_score,
+            "readability": quality_score,
+            "standards": quality_score,
+            "complexity": quality_score,
+            "testing": quality_score,
+            "metrics": {
+                "file_count": 0,
+                "test_file_count": 0,
+                "doc_file_count": 0,
+                "code_files_analyzed": 0
+            },
+            "repositories_analyzed": 1,
+            "note": "This is a basic estimate based on repository metadata, as direct repository access was not available."
+        }
+    
+    def _analyze_code_quality_with_access(self, repo_owner: str, repo_name: str) -> CodeQualityResult:
+        """
+        Analyze code quality with direct repository access.
+        
+        Args:
+            repo_owner: Owner of the repository
+            repo_name: Name of the repository
+            
+        Returns:
+            CodeQualityResult with detailed quality analysis
+        """
+        try:
+            # Collect code samples and file metrics
+            file_metrics, code_samples = self._collect_code_samples()
+            
+            # If we have code samples and a working LLM, use AI analysis
+            if code_samples and self.llm is not None:
                 try:
-                    analysis_result = analysis_chain.invoke({
-                        "repo_owner": repo_owner,
-                        "repo_name": repo_name,
-                        "repo_description": repo_info.get("description", "")
-                    })
-                    analysis_json = json.loads(analysis_result)
-                    
-                    # Extract scores and reasoning
-                    readability = analysis_json.get("readability", {})
-                    standards = analysis_json.get("standards", {})
-                    complexity = analysis_json.get("complexity", {})
-                    testing = analysis_json.get("testing", {})
-                    
-                    readability_score = readability.get("score", 0) if isinstance(readability, dict) else 0
-                    standards_score = standards.get("score", 0) if isinstance(standards, dict) else 0
-                    complexity_score = complexity.get("score", 0) if isinstance(complexity, dict) else 0
-                    testing_score = testing.get("score", 0) if isinstance(testing, dict) else 0
-                    
-                    # Calculate weighted score
-                    overall_score = (
-                        self.weights["readability"] * (readability_score / 100) +
-                        self.weights["standards"] * (standards_score / 100) +
-                        self.weights["complexity"] * (complexity_score / 100) +
-                        self.weights["testing"] * (testing_score / 100)
-                    ) * 100
-                    
-                    return {
-                        "overall_score": round(overall_score, 2),
-                        "readability": readability_score,
-                        "standards": standards_score,
-                        "complexity": complexity_score,
-                        "testing": testing_score,
-                        "ai_analysis": {
-                            "overall_analysis": analysis_json.get("overall_analysis", "") + " (Note: This is an estimate based on limited information)",
-                            "suggestions": analysis_json.get("suggestions", []),
-                            "readability_reasoning": analysis_json.get("readability", {}).get("reasoning", ""),
-                            "standards_reasoning": analysis_json.get("standards", {}).get("reasoning", ""),
-                            "complexity_reasoning": analysis_json.get("complexity", {}).get("reasoning", ""),
-                            "testing_reasoning": analysis_json.get("testing", {}).get("reasoning", "")
-                        },
-                        "metrics": {
-                            "file_count": 0,
-                            "test_file_count": 0,
-                            "doc_file_count": 0,
-                            "code_files_analyzed": 0
-                        },
-                        "note": "This analysis is based on AI estimation as direct repository access was not available."
-                    }
+                    return self._analyze_code_with_ai(code_samples, file_metrics)
                 except Exception as e:
-                    print(f"Error in AI estimation: {str(e)}")
+                    print(f"Error in AI analysis of code: {str(e)}")
+                    # Fall through to fallback analysis
             
-            # If LLM is not available or failed, use fallback
-            repo_name_lower = repo_name.lower()
-            # Simple heuristic based on repository name
-            # Check for keywords that might indicate quality code
-            quality_indicators = ["awesome", "framework", "official", "production", "stable"]
-            quality_score = 0
+            # Fallback to heuristic-based analysis
+            return self._fallback_code_quality_analysis(
+                file_metrics["file_count"],
+                file_metrics["test_file_count"],
+                file_metrics["doc_file_count"],
+                file_metrics["code_files_analyzed"]
+            )
             
-            for indicator in quality_indicators:
-                if indicator in repo_name_lower or indicator in repo_owner.lower():
-                    quality_score += 15
+        except Exception as e:
+            error_msg = f"Error analyzing repository code: {str(e)}"
+            print(error_msg)
             
-            # Premium on official organization repos
-            if repo_owner.lower() in ["microsoft", "google", "facebook", "apple", "amazon", "celo-org"]:
-                quality_score += 30
-                
-            # Cap at 85 - we can't give a perfect score without seeing the code
-            quality_score = min(85, quality_score)
-            
-            # If we found no indicators, give a baseline score
-            if quality_score == 0:
-                quality_score = 50
-            
+            # Return error result
             return {
-                "overall_score": quality_score,
-                "readability": quality_score,
-                "standards": quality_score,
-                "complexity": quality_score,
-                "testing": quality_score,
+                "error": error_msg,
+                "overall_score": 0,
+                "readability": 0,
+                "standards": 0,
+                "complexity": 0,
+                "testing": 0,
                 "metrics": {
                     "file_count": 0,
                     "test_file_count": 0,
                     "doc_file_count": 0,
                     "code_files_analyzed": 0
                 },
-                "note": "This is a basic estimate as direct repository access was not available and AI analysis is disabled."
-            }
-        
-        # If we have access to the repository, perform direct analysis
-        try:
-            # Get repository contents
-            contents = self.repo.get_contents("")
-            
-            # Count different file types
-            file_count = 0
-            test_file_count = 0
-            doc_file_count = 0
-            
-            # Process files recursively
-            files_to_process = list(contents)
-            processed_paths = set()
-            
-            # Code samples for analysis
-            code_samples = []
-            code_file_paths = []
-            
-            # Maximum files to process to avoid excessive API calls
-            max_files_to_process = 100
-            files_processed = 0
-            
-            while files_to_process and files_processed < max_files_to_process:
-                content = files_to_process.pop(0)
-                if content.path in processed_paths:
-                    continue
-                
-                processed_paths.add(content.path)
-                files_processed += 1
-                
-                if content.type == "dir":
-                    try:
-                        dir_contents = self.repo.get_contents(content.path)
-                        if isinstance(dir_contents, list):
-                            files_to_process.extend(dir_contents)
-                        else:
-                            files_to_process.append(dir_contents)
-                    except Exception:
-                        # Handle cases where directory access fails
-                        continue
-                        
-                elif content.type == "file":
-                    file_count += 1
-                    file_path = content.path
-                    
-                    # Check if it's a test file
-                    if "test" in file_path.lower() or "spec" in file_path.lower():
-                        test_file_count += 1
-                        
-                    # Check if it's a documentation file
-                    if file_path.lower().endswith((".md", ".rst", ".txt", ".doc", ".docx")):
-                        doc_file_count += 1
-                        
-                    # Analyze code file content
-                    if file_path.lower().endswith((".js", ".ts", ".jsx", ".tsx", ".py", ".java", ".sol", ".go", ".rb", ".php", ".c", ".cpp", ".cs")):
-                        try:
-                            # Add to code file paths for potential analysis
-                            code_file_paths.append(file_path)
-                            
-                            # Only sample up to 10 code files
-                            if len(code_samples) < 10:
-                                file_content = self.repo.get_contents(file_path).decoded_content.decode('utf-8')
-                                # Limit sample size
-                                sample = file_content[:1000] + "..." if len(file_content) > 1000 else file_content
-                                code_samples.append(f"File: {file_path}\n\n{sample}\n\n")
-                        except Exception:
-                            # Skip files that can't be decoded
-                            continue
-            
-            # Combine all code samples for analysis
-            code_sample_text = "\n".join(code_samples)
-            
-            # If we have code samples and a working LLM, use AI analysis
-            if code_samples and self.llm is not None:
-                # Create prompt for code quality analysis using templates
-                quality_prompt = ChatPromptTemplate.from_messages([
-                    ("system", CODE_QUALITY_PROMPT),
-                    ("human", HUMAN_CODE_QUALITY_PROMPT)
-                ])
-                
-                # Run analysis with Anthropic model
-                analysis_chain = quality_prompt | self.llm | StrOutputParser()
-                
-                # Get analysis results
-                try:
-                    analysis_result = analysis_chain.invoke({"code_samples": code_sample_text})
-                    analysis_json = json.loads(analysis_result)
-                    
-                    # Extract scores and reasoning
-                    readability = analysis_json.get("readability", {})
-                    standards = analysis_json.get("standards", {})
-                    complexity = analysis_json.get("complexity", {})
-                    testing = analysis_json.get("testing", {})
-                    
-                    readability_score = readability.get("score", 0) if isinstance(readability, dict) else 0
-                    standards_score = standards.get("score", 0) if isinstance(standards, dict) else 0
-                    complexity_score = complexity.get("score", 0) if isinstance(complexity, dict) else 0
-                    testing_score = testing.get("score", 0) if isinstance(testing, dict) else 0
-                    
-                    # Calculate weighted score
-                    overall_score = (
-                        self.weights["readability"] * (readability_score / 100) +
-                        self.weights["standards"] * (standards_score / 100) +
-                        self.weights["complexity"] * (complexity_score / 100) +
-                        self.weights["testing"] * (testing_score / 100)
-                    ) * 100
-                    
-                    return {
-                        "overall_score": round(overall_score, 2),
-                        "readability": readability_score,
-                        "standards": standards_score,
-                        "complexity": complexity_score,
-                        "testing": testing_score,
-                        "ai_analysis": {
-                            "overall_analysis": analysis_json.get("overall_analysis", ""),
-                            "suggestions": analysis_json.get("suggestions", []),
-                            "readability_reasoning": analysis_json.get("readability", {}).get("reasoning", ""),
-                            "standards_reasoning": analysis_json.get("standards", {}).get("reasoning", ""),
-                            "complexity_reasoning": analysis_json.get("complexity", {}).get("reasoning", ""),
-                            "testing_reasoning": analysis_json.get("testing", {}).get("reasoning", "")
-                        },
-                        "metrics": {
-                            "file_count": file_count,
-                            "test_file_count": test_file_count,
-                            "doc_file_count": doc_file_count,
-                            "code_files_analyzed": len(code_samples)
-                        }
-                    }
-                except (json.JSONDecodeError, Exception) as e:
-                    print(f"Error parsing LLM response: {str(e)}")
-                    
-            # If no LLM or LLM analysis failed but we have code samples,
-            # do a basic analysis based on test/doc counts
-            
-            # Fallback to heuristic-based analysis if no code samples or analysis failed
-            return self._fallback_code_quality_analysis(
-                file_count, test_file_count, doc_file_count, len(code_file_paths)
-            )
-            
-        except Exception as e:
-            # Return zero scores on error
-            print(f"Error in code quality analysis: {str(e)}")
-            return {
-                "error": f"Error analyzing code quality: {str(e)}",
-                "overall_score": 0,
-                "readability": 0,
-                "standards": 0,
-                "complexity": 0,
-                "testing": 0,
-                "metrics": {}
+                "repositories_analyzed": 0
             }
     
-    def _fallback_code_quality_analysis(self, file_count, test_file_count, doc_file_count, code_files_count):
+    def _collect_code_samples(self) -> Tuple[Dict[str, int], List[str]]:
         """
-        Fallback method for code quality analysis using heuristics.
+        Collect code samples and file metrics from repository.
+        
+        Returns:
+            Tuple of file metrics and code samples
+        """
+        # Get repository contents
+        contents = self.repo.get_contents("")
+        
+        # Initialize counters
+        file_count = 0
+        test_file_count = 0
+        doc_file_count = 0
+        
+        # Process files recursively
+        files_to_process = list(contents)
+        processed_paths = set()
+        
+        # Code samples for analysis
+        code_samples = []
+        code_file_paths = []
+        
+        # Maximum files to process to avoid excessive API calls
+        max_files_to_process = 100
+        files_processed = 0
+        
+        # Process repository files
+        while files_to_process and files_processed < max_files_to_process:
+            content = files_to_process.pop(0)
+            if content.path in processed_paths:
+                continue
+            
+            processed_paths.add(content.path)
+            files_processed += 1
+            
+            if content.type == "dir":
+                try:
+                    # Add directory contents to processing queue
+                    dir_contents = self.repo.get_contents(content.path)
+                    if isinstance(dir_contents, list):
+                        files_to_process.extend(dir_contents)
+                    else:
+                        files_to_process.append(dir_contents)
+                except Exception:
+                    # Skip directories we can't access
+                    continue
+                    
+            elif content.type == "file":
+                file_count += 1
+                file_path = content.path
+                
+                # Classify file types
+                if "test" in file_path.lower() or "spec" in file_path.lower():
+                    test_file_count += 1
+                    
+                if file_path.lower().endswith((".md", ".rst", ".txt", ".doc", ".docx")):
+                    doc_file_count += 1
+                    
+                # Collect code file samples
+                code_extensions = (".js", ".ts", ".jsx", ".tsx", ".py", ".java", ".sol", 
+                                  ".go", ".rb", ".php", ".c", ".cpp", ".cs")
+                if file_path.lower().endswith(code_extensions):
+                    try:
+                        # Add to code file paths
+                        code_file_paths.append(file_path)
+                        
+                        # Only sample up to 10 code files
+                        if len(code_samples) < 10:
+                            file_content = self.repo.get_contents(file_path).decoded_content.decode('utf-8')
+                            # Limit sample size
+                            sample = file_content[:1000] + "..." if len(file_content) > 1000 else file_content
+                            code_samples.append(f"File: {file_path}\n\n{sample}\n\n")
+                    except Exception:
+                        # Skip files that can't be decoded
+                        continue
+        
+        # Compile file metrics
+        file_metrics = {
+            "file_count": file_count,
+            "test_file_count": test_file_count,
+            "doc_file_count": doc_file_count,
+            "code_files_analyzed": len(code_file_paths)
+        }
+        
+        return file_metrics, code_samples
+    
+    def _analyze_code_with_ai(self, code_samples: List[str], file_metrics: Dict[str, int]) -> CodeQualityResult:
+        """
+        Analyze code quality using AI.
+        
+        Args:
+            code_samples: List of code samples
+            file_metrics: Repository file metrics
+            
+        Returns:
+            CodeQualityResult with AI-based analysis
+        """
+        # Combine code samples for analysis
+        code_sample_text = "\n".join(code_samples)
+        
+        # Create prompt for code quality analysis
+        quality_prompt = ChatPromptTemplate.from_messages([
+            ("system", CODE_QUALITY_PROMPT),
+            ("human", HUMAN_CODE_QUALITY_PROMPT)
+        ])
+        
+        # Run analysis with AI model
+        analysis_chain = quality_prompt | self.llm | StrOutputParser()
+        analysis_result = analysis_chain.invoke({"code_samples": code_sample_text})
+        
+        # Parse the AI response
+        analysis_json = json.loads(analysis_result)
+        
+        # Extract scores and reasoning
+        readability = analysis_json.get("readability", {})
+        standards = analysis_json.get("standards", {})
+        complexity = analysis_json.get("complexity", {})
+        testing = analysis_json.get("testing", {})
+        
+        readability_score = readability.get("score", 0) if isinstance(readability, dict) else 0
+        standards_score = standards.get("score", 0) if isinstance(standards, dict) else 0
+        complexity_score = complexity.get("score", 0) if isinstance(complexity, dict) else 0
+        testing_score = testing.get("score", 0) if isinstance(testing, dict) else 0
+        
+        # Calculate weighted score
+        overall_score = self._calculate_weighted_score(
+            readability_score, standards_score, complexity_score, testing_score
+        )
+        
+        # Compile and return the results
+        return {
+            "overall_score": round(overall_score, 2),
+            "readability": readability_score,
+            "standards": standards_score,
+            "complexity": complexity_score,
+            "testing": testing_score,
+            "ai_analysis": {
+                "overall_analysis": analysis_json.get("overall_analysis", ""),
+                "suggestions": analysis_json.get("suggestions", []),
+                "readability_reasoning": readability.get("reasoning", ""),
+                "standards_reasoning": standards.get("reasoning", ""),
+                "complexity_reasoning": complexity.get("reasoning", ""),
+                "testing_reasoning": testing.get("reasoning", "")
+            },
+            "metrics": file_metrics,
+            "repositories_analyzed": 1
+        }
+    
+    def _calculate_weighted_score(self, readability: float, standards: float, 
+                                 complexity: float, testing: float) -> float:
+        """
+        Calculate weighted overall score from component scores.
+        
+        Args:
+            readability: Readability score (0-100)
+            standards: Standards score (0-100)
+            complexity: Complexity score (0-100)
+            testing: Testing score (0-100)
+            
+        Returns:
+            Weighted overall score (0-100)
+        """
+        # Calculate weighted score based on configuration weights
+        weighted_score = (
+            self.config.weights["readability"] * (readability / 100) +
+            self.config.weights["standards"] * (standards / 100) +
+            self.config.weights["complexity"] * (complexity / 100) +
+            self.config.weights["testing"] * (testing / 100)
+        ) * 100
+        
+        return weighted_score
+    
+    def _fallback_code_quality_analysis(self, file_count: int, test_file_count: int, 
+                                  doc_file_count: int, code_files_count: int) -> CodeQualityResult:
+        """
+        Fallback method for code quality analysis using heuristics based on file counts.
         
         Args:
             file_count: Total number of files
@@ -780,25 +1097,28 @@ class GitHubLangChainAnalyzer:
             code_files_count: Number of code files
             
         Returns:
-            Dictionary containing code quality scores
+            CodeQualityResult with heuristic-based scores
         """
         try:
             # Calculate scores using simple heuristics based on file counts
-            readability_score = min(100, 50 + (doc_file_count / max(1, file_count) * 500))  # More docs = better readability
-            standards_score = min(100, 50 + (doc_file_count / max(1, file_count) * 500))  # More docs = better standards
-            testing_score = min(100, test_file_count / max(1, file_count) * 500)  # Aim for ~20% tests
+            # More docs = better readability (aim for ~10-20% docs)
+            readability_score = min(100, 50 + (doc_file_count / max(1, file_count) * 500))
+            
+            # More docs = better standards
+            standards_score = min(100, 50 + (doc_file_count / max(1, file_count) * 500))
+            
+            # Aim for ~20% tests
+            testing_score = min(100, test_file_count / max(1, file_count) * 500)
             
             # Complexity is hard to measure without deep code analysis, use a placeholder
             complexity_score = 70  # Default score
             
             # Calculate weighted score
-            overall_score = (
-                self.weights["readability"] * (readability_score / 100) +
-                self.weights["standards"] * (standards_score / 100) +
-                self.weights["complexity"] * (complexity_score / 100) +
-                self.weights["testing"] * (testing_score / 100)
-            ) * 100
+            overall_score = self._calculate_weighted_score(
+                readability_score, standards_score, complexity_score, testing_score
+            )
             
+            # Return complete result object
             return {
                 "overall_score": round(overall_score, 2),
                 "readability": round(readability_score, 2),
@@ -811,19 +1131,29 @@ class GitHubLangChainAnalyzer:
                     "doc_file_count": doc_file_count,
                     "code_files_analyzed": code_files_count
                 },
-                "note": "Using fallback analysis method due to LLM processing error."
+                "repositories_analyzed": 1,
+                "note": "Using file count heuristics for analysis due to unavailable AI processing."
             }
             
         except Exception as e:
-            # Return zero scores on error
+            error_msg = f"Error in fallback analysis: {str(e)}"
+            print(error_msg)
+            
+            # Return structured error result
             return {
-                "error": f"Error in fallback analysis: {str(e)}",
+                "error": error_msg,
                 "overall_score": 0,
                 "readability": 0,
                 "standards": 0,
                 "complexity": 0,
                 "testing": 0,
-                "metrics": {}
+                "metrics": {
+                    "file_count": file_count,
+                    "test_file_count": test_file_count,
+                    "doc_file_count": doc_file_count,
+                    "code_files_analyzed": 0
+                },
+                "repositories_analyzed": 0
             }
     
     def _check_celo_integration(self, repo_owner: str, repo_name: str) -> Dict[str, Any]:
