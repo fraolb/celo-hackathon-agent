@@ -43,8 +43,8 @@ An intelligent tool that analyzes GitHub repositories for Celo hackathon project
 Create an Excel file with the following columns:
 - `project_name`: Name of the project
 - `project_description`: Brief description of the project
-- `project_github_url`: URL of the project's GitHub repository
-- `project_usernames`: List of usernames associated with the project
+- `project_github_url`: URL of the project's GitHub repository (can be comma-separated for multiple repos)
+- `project_owner_github_url`: GitHub URLs of project owners (can be comma-separated)
 - `project_url`: Main website URL of the project
 
 Or generate sample data:
