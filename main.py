@@ -12,15 +12,25 @@ from dotenv import load_dotenv
 from tqdm import tqdm
 
 # Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("analysis.log"),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
+# File handler for detailed logging
+file_handler = logging.FileHandler("analysis.log")
+file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+file_handler.setLevel(logging.DEBUG)
+
+# Console handler for minimal logging (only errors by default)
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setFormatter(logging.Formatter('%(message)s'))
+console_handler.setLevel(logging.ERROR)  # Only show errors in console by default
+
+# Configure logger
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+logger.addHandler(file_handler)
+logger.addHandler(console_handler)
+
+# Suppress logging from other libraries
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("anthropic").setLevel(logging.WARNING)
 
 # Load environment variables from .env file
 load_dotenv()
@@ -29,28 +39,51 @@ load_dotenv()
 class Spinner:
     def __init__(self, message="Loading"):
         self.message = message
-        self.frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        # Fancy spinner frames
+        self.frames = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"]
         self.delay = 0.1
         self.is_spinning = False
         self.index = 0
         self.start_time = time.time()
+        # Color setup
+        self.colors = {
+            'reset': '\033[0m',
+            'bold': '\033[1m',
+            'green': '\033[92m',
+            'blue': '\033[94m',
+            'cyan': '\033[96m',
+            'yellow': '\033[93m',
+            'magenta': '\033[95m'
+        }
         
     def start(self):
         self.is_spinning = True
         self.start_time = time.time()
-        print(f"\r{self.frames[self.index]} {self.message}", end="")
+        spinner = f"{self.colors['cyan']}{self.frames[self.index]}{self.colors['reset']}"
+        message = f"{self.colors['bold']}{self.message}{self.colors['reset']}"
+        print(f"\r{spinner} {message}", end="")
         
     def update(self, message=None):
         if message:
             self.message = message
         self.index = (self.index + 1) % len(self.frames)
         elapsed = time.time() - self.start_time
-        print(f"\r{self.frames[self.index]} {self.message} ({elapsed:.1f}s)", end="")
+        
+        spinner = f"{self.colors['cyan']}{self.frames[self.index]}{self.colors['reset']}"
+        message = f"{self.colors['bold']}{self.message}{self.colors['reset']}"
+        elapsed_text = f"{self.colors['yellow']}({elapsed:.1f}s){self.colors['reset']}"
+        
+        print(f"\r{spinner} {message} {elapsed_text}", end="")
         
     def stop(self, message=None):
         final_message = message if message else self.message
         elapsed = time.time() - self.start_time
-        print(f"\r✓ {final_message} (completed in {elapsed:.1f}s)")
+        
+        check = f"{self.colors['green']}✓{self.colors['reset']}"
+        message = f"{self.colors['bold']}{final_message}{self.colors['reset']}"
+        elapsed_text = f"{self.colors['yellow']}(completed in {elapsed:.1f}s){self.colors['reset']}"
+        
+        print(f"\r{check} {message} {elapsed_text}")
         self.is_spinning = False
 
 
@@ -111,10 +144,14 @@ def analyze_projects(
     total_projects = len(projects_df)
     logger.info(f"Starting analysis of {total_projects} projects")
     
-    # Initialize progress bar
-    progress_bar = tqdm(total=total_projects, 
-                        desc="Analyzing Projects", 
-                        bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]")
+    # Initialize progress bar with custom colors and format
+    progress_bar = tqdm(
+        total=total_projects,
+        desc="Analyzing Projects",
+        bar_format="{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
+        ncols=80,
+        colour="green"
+    )
     
     analyzer = GitHubLangChainAnalyzer(config_path)
     results = []
@@ -124,8 +161,8 @@ def analyze_projects(
         project_description = row["project_description"]
         project_github_url = row["project_github_url"]
         
-        # Update progress bar description
-        progress_bar.set_description(f"Analyzing {project_name} ({index+1}/{total_projects})")
+        # Update progress bar description - keep it simple
+        progress_bar.set_description(f"Analyzing Projects")
         
         # Convert project_usernames to a list if it's a string or NaN value
         project_usernames = []
@@ -286,10 +323,14 @@ def generate_report(results: List[Dict[str, Any]], output_dir: str = "reports") 
                     f"| {project_name} | {score:.2f} | {celo_status} | [{github_url}]({github_url}) |\n"
                 )
         
-        # Initialize progress bar for individual reports
-        progress_bar = tqdm(total=len(results), 
-                            desc="Generating Project Reports", 
-                            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt}")
+        # Initialize progress bar for individual reports with custom colors and format
+        progress_bar = tqdm(
+            total=len(results),
+            desc="Generating Reports",
+            bar_format="{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
+            ncols=80,
+            colour="blue"
+        )
 
         # Generate individual reports
         for idx, result in enumerate(results):
@@ -297,8 +338,8 @@ def generate_report(results: List[Dict[str, Any]], output_dir: str = "reports") 
             file_name = project_name.replace(" ", "_").lower()
             report_path = os.path.join(output_dir, f"{file_name}.md")
             
-            # Update progress description
-            progress_bar.set_description(f"Generating report for {project_name} ({idx+1}/{len(results)})")
+            # Keep the progress description simple
+            progress_bar.set_description(f"Generating Reports")
             
             # Log progress
             logger.info(f"Creating report for {project_name} ({idx+1}/{len(results)})")
@@ -514,16 +555,25 @@ def generate_report(results: List[Dict[str, Any]], output_dir: str = "reports") 
 
 def main():
     """Main function to run the analysis."""
-    # Show banner
-    banner = """
-    ██████╗███████╗██╗      ██████╗     ██╗  ██╗ █████╗  ██████╗██╗  ██╗ █████╗ ████████╗██╗  ██╗ ██████╗ ███╗   ██╗
-    ██╔════╝██╔════╝██║     ██╔═══██╗    ██║  ██║██╔══██╗██╔════╝██║ ██╔╝██╔══██╗╚══██╔══╝██║  ██║██╔═══██╗████╗  ██║
-    ██║     █████╗  ██║     ██║   ██║    ███████║███████║██║     █████╔╝ ███████║   ██║   ███████║██║   ██║██╔██╗ ██║
-    ██║     ██╔══╝  ██║     ██║   ██║    ██╔══██║██╔══██║██║     ██╔═██╗ ██╔══██║   ██║   ██╔══██║██║   ██║██║╚██╗██║
-    ╚██████╗███████╗███████╗╚██████╔╝    ██║  ██║██║  ██║╚██████╗██║  ██╗██║  ██║   ██║   ██║  ██║╚██████╔╝██║ ╚████║
-    ╚═════╝╚══════╝╚══════╝ ╚═════╝     ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝   ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝
-                                                                                                                                                            
-    🌟 Project Analysis Tool 🌟
+    # Colors for styling
+    colors = {
+        'reset': '\033[0m',
+        'bold': '\033[1m',
+        'green': '\033[92m',
+        'blue': '\033[94m',
+        'cyan': '\033[96m',
+        'yellow': '\033[93m',
+        'magenta': '\033[95m'
+    }
+    
+    # Show a smaller, cleaner banner
+    banner = f"""
+    {colors['cyan']}╔═════════════════════════════════════════════════════╗
+    ║ {colors['yellow']}CELO HACKATHON PROJECT ANALYZER{colors['cyan']}                  ║
+    ╚═════════════════════════════════════════════════════╝{colors['reset']}
+    
+    {colors['bold']}A tool to analyze GitHub repositories for code quality 
+    and Celo blockchain integration.{colors['reset']}
     """
     print(banner)
     
@@ -546,12 +596,13 @@ def main():
         logger.setLevel(logging.DEBUG)
         logger.debug("Verbose logging enabled")
     
-    # Print startup information
-    print(f"🚀 Starting Celo Hackathon Project Analysis")
-    print(f"📊 Input: {args.excel}")
-    print(f"⚙️ Config: {args.config}")
-    print(f"📁 Output: {args.output}")
-    print(f"🔍 Analysis beginning...\n")
+    # Print startup information in a cleaner format
+    print(f"{colors['bold']}Configuration:{colors['reset']}")
+    print(f"  {colors['cyan']}📊 Input:{colors['reset']} {args.excel}")
+    print(f"  {colors['cyan']}⚙️  Config:{colors['reset']} {args.config}")
+    print(f"  {colors['cyan']}📁 Output:{colors['reset']} {args.output}")
+    
+    print(f"\n{colors['yellow']}Starting analysis...{colors['reset']}\n")
     
     start_time = time.time()
     
@@ -579,11 +630,15 @@ def main():
         elapsed_time = time.time() - start_time
         minutes, seconds = divmod(elapsed_time, 60)
         
-        # Show completion message
-        print(f"\n✅ Analysis completed in {int(minutes)}m {int(seconds)}s")
-        print(f"📊 Analyzed {project_count} projects")
-        print(f"📝 Reports saved to {args.output} directory")
-        print(f"🙏 Thank you for using the Celo Hackathon Analysis Tool!")
+        # Show a more stylish completion message
+        print(f"\n{colors['green']}╔═════════════════════════════════════════════════════╗{colors['reset']}")
+        print(f"{colors['green']}║ {colors['bold']}✅ ANALYSIS COMPLETED SUCCESSFULLY{colors['reset']}{colors['green']}                 ║{colors['reset']}")
+        print(f"{colors['green']}╚═════════════════════════════════════════════════════╝{colors['reset']}")
+        print(f"\n{colors['bold']}Summary:{colors['reset']}")
+        print(f"  {colors['cyan']}⏱️  Time:{colors['reset']} {int(minutes)}m {int(seconds)}s")
+        print(f"  {colors['cyan']}📊 Projects:{colors['reset']} {project_count}")
+        print(f"  {colors['cyan']}📁 Reports:{colors['reset']} {args.output}/")
+        print(f"\n{colors['yellow']}Thank you for using the Celo Hackathon Analysis Tool!{colors['reset']}")
         
         # Log completion
         logger.info(f"Analysis completed successfully in {elapsed_time:.2f} seconds")
