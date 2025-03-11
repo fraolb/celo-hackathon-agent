@@ -62,9 +62,9 @@ def with_timeout(seconds):
     return decorator
 
 
-def run_with_spinner_updates(func, args=(), kwargs={}, message=None, callback=None, update_interval=0.5):
+def run_with_active_spinner(func, args=(), kwargs={}, message=None, callback=None, update_interval=0.2):
     """
-    Run a function with continuous spinner updates to show progress.
+    Run a function with periodic spinner updates without using threads.
     
     Args:
         func: Function to run
@@ -72,7 +72,7 @@ def run_with_spinner_updates(func, args=(), kwargs={}, message=None, callback=No
         kwargs: Keyword arguments to pass to the function
         message: Message to display in the spinner
         callback: Callback function for updating the spinner
-        update_interval: How often to update the spinner (in seconds)
+        update_interval: Not used in this non-threaded implementation
         
     Returns:
         The result of the function
@@ -81,49 +81,29 @@ def run_with_spinner_updates(func, args=(), kwargs={}, message=None, callback=No
         # If no callback, just run the function directly
         return func(*args, **kwargs)
     
-    # Create variables to share data between threads
-    result = [None]
-    finished = [False]
-    error = [None]
+    # Initial spinner update
+    if message:
+        callback(f"{message}")
     
-    # Function to run in the main thread
-    def run_func():
-        try:
-            result[0] = func(*args, **kwargs)
-        except Exception as e:
-            error[0] = e
-        finally:
-            finished[0] = True
-    
-    # Function to update the spinner in a separate thread
-    def update_spinner():
-        counter = 0
-        while not finished[0]:
-            # Update the spinner with incrementing counter
-            if message:
-                callback(f"{message} (running for {counter:.1f}s)")
-            time.sleep(update_interval)
-            counter += update_interval
-    
-    # Create and start threads
-    func_thread = threading.Thread(target=run_func)
-    spinner_thread = threading.Thread(target=update_spinner)
-    
-    func_thread.start()
-    spinner_thread.start()
-    
-    # Wait for the function to complete
-    func_thread.join()
-    
-    # Force finished flag to stop spinner thread
-    finished[0] = True
-    spinner_thread.join()
-    
-    # If there was an error, raise it
-    if error[0]:
-        raise error[0]
-    
-    return result[0]
+    # Directly run the function
+    start_time = time.time()
+    try:
+        # For functions that might take a long time, we can't do much without threading
+        # Just run the function and let the spinner animation happen before and after
+        result = func(*args, **kwargs)
+        
+        # Update spinner after completion
+        elapsed = time.time() - start_time
+        if message:
+            callback(f"{message} (completed in {elapsed:.1f}s)")
+            
+        return result
+    except Exception as e:
+        # Update spinner with error
+        elapsed = time.time() - start_time
+        if message:
+            callback(f"{message} - Error: {str(e)} after {elapsed:.1f}s")
+        raise e
 
 
 class GitHubLangChainAnalyzer:
@@ -262,13 +242,12 @@ class GitHubLangChainAnalyzer:
             if callback:
                 callback(f"Fetching repository details for {repo_owner}/{repo_name}")
                 
-                # Run repository details fetch with spinner updates
-                repo_details = run_with_spinner_updates(
+                # Run repository details fetch with active spinner
+                repo_details = run_with_active_spinner(
                     func=self._get_repository_details_with_timeout,
                     args=(repo_owner, repo_name),
                     message=f"Fetching repository details for {repo_owner}/{repo_name}",
-                    callback=callback,
-                    update_interval=0.3  # Faster updates for this shorter operation
+                    callback=callback
                 )
             else:
                 repo_details = self._get_repository_details_with_timeout(repo_owner, repo_name)
@@ -288,13 +267,12 @@ class GitHubLangChainAnalyzer:
             if callback:
                 callback(f"Analyzing code quality for {repo_owner}/{repo_name}")
                 
-                # Run code quality analysis with spinner updates
-                code_quality = run_with_spinner_updates(
+                # Run code quality analysis with active spinner
+                code_quality = run_with_active_spinner(
                     func=self._analyze_code_quality_with_timeout,
                     args=(repo_owner, repo_name),
                     message=f"Analyzing code quality for {repo_owner}/{repo_name}",
-                    callback=callback,
-                    update_interval=0.5
+                    callback=callback
                 )
             else:
                 code_quality = self._analyze_code_quality_with_timeout(repo_owner, repo_name)
@@ -317,13 +295,12 @@ class GitHubLangChainAnalyzer:
             if callback:
                 callback(f"Checking Celo integration for {repo_owner}/{repo_name}")
                 
-                # Run Celo integration check with spinner updates
-                celo_integration = run_with_spinner_updates(
+                # Run Celo integration check with active spinner
+                celo_integration = run_with_active_spinner(
                     func=self._check_celo_integration_with_timeout,
                     args=(repo_owner, repo_name),
                     message=f"Checking Celo integration for {repo_owner}/{repo_name}",
-                    callback=callback,
-                    update_interval=0.5
+                    callback=callback
                 )
             else:
                 celo_integration = self._check_celo_integration_with_timeout(repo_owner, repo_name)

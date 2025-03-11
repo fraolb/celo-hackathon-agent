@@ -82,18 +82,35 @@ class Spinner:
         if message:
             self.message = message
             
-        # Single frame update with clear line first
+        # Update animation frame
         self.index = (self.index + 1) % len(self.current_frames)
+        
+        # Calculate elapsed time
         elapsed = time.time() - self.start_time
+        
+        # Get current message or use the one passed in
+        current_message = self.message if message is None else message
+        
+        # Check if message contains elapsed time already
+        if "running for" in current_message or "completed in" in current_message:
+            # Message already contains timing information
+            display_message = current_message
+        else:
+            # Add timing information
+            display_message = f"{current_message} ({elapsed:.1f}s)"
         
         # Clear line completely first
         print("\r" + " " * 120, end="", flush=True)
         
+        # Format with colors
         spinner = f"{self.colors['cyan']}{self.current_frames[self.index]}{self.colors['reset']}"
-        message = f"{self.colors['bold']}{self.message}{self.colors['reset']}"
-        elapsed_text = f"{self.colors['yellow']}({elapsed:.1f}s){self.colors['reset']}"
+        formatted_message = f"{self.colors['bold']}{display_message}{self.colors['reset']}"
         
-        print(f"\r{spinner} {message} {elapsed_text}", end="", flush=True)
+        # Print the spinner and message
+        print(f"\r{spinner} {formatted_message}", end="", flush=True)
+        
+        # Make animations smoother by adding small delay
+        time.sleep(0.05)
         
     def stop(self, message=None):
         final_message = message if message else self.message
@@ -218,6 +235,13 @@ def analyze_projects(
             def progress_callback(message):
                 # The spinner's update method now includes animation
                 spinner.update(message)
+                
+                # Helper for manual animation during long operations
+                if "Analyzing" in message or "Checking" in message:
+                    # Manually force a few extra animation frames to show activity
+                    for _ in range(3):
+                        time.sleep(0.1)
+                        spinner.update(message)
             
             # Analyze repository with progress updates
             repo_analysis = analyzer.analyze_repository(
