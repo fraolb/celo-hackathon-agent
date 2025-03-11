@@ -8,3 +8,5 @@ pygithub
 PyYAML
 python-dotenv
 langgraph
+tqdm
+colorama

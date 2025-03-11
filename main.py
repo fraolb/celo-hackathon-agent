@@ -2,13 +2,56 @@ import os
 import json
 import pandas as pd
 import argparse
+import time
+import logging
+import sys
 from github_analyzer import GitHubLangChainAnalyzer
 from pathlib import Path
 from typing import Dict, List, Any
 from dotenv import load_dotenv
+from tqdm import tqdm
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("analysis.log"),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Spinner animation for CLI
+class Spinner:
+    def __init__(self, message="Loading"):
+        self.message = message
+        self.frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        self.delay = 0.1
+        self.is_spinning = False
+        self.index = 0
+        self.start_time = time.time()
+        
+    def start(self):
+        self.is_spinning = True
+        self.start_time = time.time()
+        print(f"\r{self.frames[self.index]} {self.message}", end="")
+        
+    def update(self, message=None):
+        if message:
+            self.message = message
+        self.index = (self.index + 1) % len(self.frames)
+        elapsed = time.time() - self.start_time
+        print(f"\r{self.frames[self.index]} {self.message} ({elapsed:.1f}s)", end="")
+        
+    def stop(self, message=None):
+        final_message = message if message else self.message
+        elapsed = time.time() - self.start_time
+        print(f"\r✓ {final_message} (completed in {elapsed:.1f}s)")
+        self.is_spinning = False
 
 
 def load_projects(excel_path: str) -> pd.DataFrame:
@@ -21,7 +64,11 @@ def load_projects(excel_path: str) -> pd.DataFrame:
     Returns:
         DataFrame containing project data
     """
+    spinner = Spinner(f"Loading projects from {excel_path}")
+    spinner.start()
+    
     try:
+        logger.info(f"Loading project data from Excel file: {excel_path}")
         df = pd.read_excel(excel_path)
         required_columns = [
             "project_name",
@@ -34,11 +81,18 @@ def load_projects(excel_path: str) -> pd.DataFrame:
         # Check if required columns exist
         for col in required_columns:
             if col not in df.columns:
+                spinner.stop(f"Error: Missing column {col}")
                 raise ValueError(f"Missing required column: {col}")
 
+        project_count = len(df)
+        spinner.stop(f"Successfully loaded {project_count} projects from {excel_path}")
+        logger.info(f"Successfully loaded {project_count} projects")
         return df
     except Exception as e:
-        raise Exception(f"Error loading project data: {str(e)}")
+        error_msg = f"Error loading project data: {str(e)}"
+        spinner.stop(f"Failed to load projects: {str(e)}")
+        logger.error(error_msg)
+        raise Exception(error_msg)
 
 
 def analyze_projects(
@@ -54,13 +108,25 @@ def analyze_projects(
     Returns:
         List of dictionaries containing analysis results
     """
+    total_projects = len(projects_df)
+    logger.info(f"Starting analysis of {total_projects} projects")
+    
+    # Initialize progress bar
+    progress_bar = tqdm(total=total_projects, 
+                        desc="Analyzing Projects", 
+                        bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]")
+    
     analyzer = GitHubLangChainAnalyzer(config_path)
     results = []
 
-    for _, row in projects_df.iterrows():
+    for index, row in projects_df.iterrows():
         project_name = row["project_name"]
         project_description = row["project_description"]
         project_github_url = row["project_github_url"]
+        
+        # Update progress bar description
+        progress_bar.set_description(f"Analyzing {project_name} ({index+1}/{total_projects})")
+        
         # Convert project_usernames to a list if it's a string or NaN value
         project_usernames = []
         if isinstance(row["project_usernames"], list):
@@ -80,23 +146,82 @@ def analyze_projects(
         # Otherwise, leave as empty list
         project_url = row["project_url"]
 
-        print(f"Analyzing project: {project_name}")
+        logger.info(f"Analyzing project {index+1}/{total_projects}: {project_name}")
+        
+        # Create a spinner for this project
+        spinner = Spinner(f"Fetching GitHub repository for {project_name}")
+        spinner.start()
 
         # Analyze GitHub repository
-        repo_analysis = analyzer.analyze_repository(project_github_url)
+        try:
+            # Define a callback function to update the spinner
+            def progress_callback(message):
+                spinner.update(message)
+                time.sleep(0.2)  # Small delay to see the spinner update
+            
+            # Analyze repository with progress updates
+            repo_analysis = analyzer.analyze_repository(
+                project_github_url, 
+                callback=progress_callback
+            )
+            
+            # Final update when done
+            spinner.stop(f"Completed analysis for {project_name}")
+            
+            # Combine project info with analysis results
+            project_result = {
+                "project_name": project_name,
+                "project_description": project_description,
+                "project_github_url": project_github_url,
+                "project_usernames": project_usernames,
+                "project_url": project_url,
+                "analysis": repo_analysis,
+            }
 
-        # Combine project info with analysis results
-        project_result = {
-            "project_name": project_name,
-            "project_description": project_description,
-            "project_github_url": project_github_url,
-            "project_usernames": project_usernames,
-            "project_url": project_url,
-            "analysis": repo_analysis,
-        }
-
-        results.append(project_result)
-
+            results.append(project_result)
+            
+            # Basic success message
+            logger.info(f"Successfully analyzed {project_name}")
+            
+            # Get the code quality score
+            if "code_quality" in repo_analysis:
+                if isinstance(repo_analysis["code_quality"], dict) and "overall_score" in repo_analysis["code_quality"]:
+                    score = repo_analysis["code_quality"]["overall_score"]
+                    logger.info(f"Code quality score for {project_name}: {score:.2f}/100")
+                    
+            # Get Celo integration status
+            if "celo_integration" in repo_analysis:
+                if isinstance(repo_analysis["celo_integration"], dict) and "integrated" in repo_analysis["celo_integration"]:
+                    is_integrated = repo_analysis["celo_integration"]["integrated"]
+                    logger.info(f"Celo integration for {project_name}: {'Yes' if is_integrated else 'No'}")
+            
+        except Exception as e:
+            spinner.stop(f"Failed to analyze {project_name}: {str(e)}")
+            logger.error(f"Error analyzing {project_name}: {str(e)}")
+            
+            # Add error result
+            project_result = {
+                "project_name": project_name,
+                "project_description": project_description,
+                "project_github_url": project_github_url,
+                "project_usernames": project_usernames,
+                "project_url": project_url,
+                "analysis": {
+                    "error": f"Error analyzing repository: {str(e)}",
+                    "code_quality": 0,
+                    "celo_integration": False
+                }
+            }
+            
+            results.append(project_result)
+        
+        # Update progress bar
+        progress_bar.update(1)
+        
+    # Close progress bar
+    progress_bar.close()
+    logger.info(f"Completed analysis of all {total_projects} projects")
+    
     return results
 
 
@@ -108,245 +233,301 @@ def generate_report(results: List[Dict[str, Any]], output_dir: str = "reports") 
         results: List of dictionaries containing analysis results
         output_dir: Directory to save reports
     """
-    # Create output directory if it doesn't exist
-    os.makedirs(output_dir, exist_ok=True)
+    # Create a spinner for report generation
+    spinner = Spinner(f"Generating reports in {output_dir} directory")
+    spinner.start()
+    
+    logger.info(f"Starting report generation for {len(results)} projects")
+    
+    try:
+        # Create output directory if it doesn't exist
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Generate summary report
+        spinner.update(f"Creating summary report")
+        logger.info(f"Generating summary report in {output_dir}")
+        
+        summary_path = os.path.join(output_dir, "summary.md")
+        with open(summary_path, "w") as f:
+            f.write("# Celo Hackathon Project Analysis Summary\n\n")
+            f.write("| Project | Score | Celo Integration | GitHub URL |\n")
+            f.write("|---------|-------|------------------|------------|\n")
 
-    # Generate summary report
-    summary_path = os.path.join(output_dir, "summary.md")
-    with open(summary_path, "w") as f:
-        f.write("# Celo Hackathon Project Analysis Summary\n\n")
-        f.write("| Project | Score | Celo Integration | GitHub URL |\n")
-        f.write("|---------|-------|------------------|------------|\n")
+            for result in results:
+                project_name = result["project_name"]
+                github_url = result["project_github_url"]
 
-        for result in results:
-            project_name = result["project_name"]
-            github_url = result["project_github_url"]
-
-            # Get code quality score
-            if "analysis" in result and "code_quality" in result["analysis"]:
-                code_quality = result["analysis"]["code_quality"]
-                if isinstance(code_quality, dict) and "overall_score" in code_quality:
-                    score = code_quality["overall_score"]
-                elif isinstance(code_quality, (int, float)):
-                    score = code_quality
+                # Get code quality score
+                if "analysis" in result and "code_quality" in result["analysis"]:
+                    code_quality = result["analysis"]["code_quality"]
+                    if isinstance(code_quality, dict) and "overall_score" in code_quality:
+                        score = code_quality["overall_score"]
+                    elif isinstance(code_quality, (int, float)):
+                        score = code_quality
+                    else:
+                        score = 0
                 else:
                     score = 0
-            else:
-                score = 0
 
-            # Get Celo integration status
-            if "analysis" in result and "celo_integration" in result["analysis"]:
-                celo_integration = result["analysis"]["celo_integration"]
-                if isinstance(celo_integration, dict) and "integrated" in celo_integration:
-                    celo_integrated = celo_integration["integrated"]
-                elif isinstance(celo_integration, bool):
-                    celo_integrated = celo_integration
-                else:
-                    celo_integrated = False
-                celo_status = "✅" if celo_integrated else "❌"
-            else:
-                celo_status = "❌"
-
-            f.write(
-                f"| {project_name} | {score:.2f} | {celo_status} | [{github_url}]({github_url}) |\n"
-            )
-
-    # Generate individual reports
-    for result in results:
-        project_name = result["project_name"].replace(" ", "_").lower()
-        report_path = os.path.join(output_dir, f"{project_name}.md")
-
-        with open(report_path, "w") as f:
-            f.write(f"# Project Analysis: {result['project_name']}\n\n")
-
-            # Project Overview
-            f.write("## Project Overview\n\n")
-            f.write(f"**Project Name:** {result['project_name']}\n\n")
-            f.write(f"**Project Description:** {result['project_description']}\n\n")
-            # Handle None/NaN project_url
-            project_url = result['project_url']
-            if project_url is None or isinstance(project_url, float) and pd.isna(project_url):
-                f.write(f"**Project URL:** Not available\n\n")
-            else:
-                f.write(f"**Project URL:** [{project_url}]({project_url})\n\n")
-            f.write(
-                f"**GitHub URL:** [{result['project_github_url']}]({result['project_github_url']})\n\n"
-            )
-
-            # Repository details
-            if "analysis" in result and "repo_details" in result["analysis"]:
-                repo = result["analysis"]["repo_details"]
-                f.write("### Repository Statistics\n\n")
-                f.write(f"- **Stars:** {repo.get('stars', 'N/A')}\n")
-                f.write(f"- **Forks:** {repo.get('forks', 'N/A')}\n")
-                f.write(f"- **Open Issues:** {repo.get('open_issues', 'N/A')}\n")
-                f.write(f"- **Primary Language:** {repo.get('language', 'N/A')}\n")
-                f.write(f"- **Last Updated:** {repo.get('last_update', 'N/A')}\n\n")
-
-            # Code Quality
-            f.write("## Code Quality Assessment\n\n")
-
-            if "analysis" in result and "code_quality" in result["analysis"]:
-                quality = result["analysis"]["code_quality"]
-
-                if isinstance(quality, (int, float)):
-                    # If code_quality is just a number
-                    f.write(f"**Overall Score:** {quality:.2f}/100\n\n")
-                elif isinstance(quality, dict):
-                    if "error" in quality:
-                        f.write(f"**Error:** {quality['error']}\n\n")
+                # Get Celo integration status
+                if "analysis" in result and "celo_integration" in result["analysis"]:
+                    celo_integration = result["analysis"]["celo_integration"]
+                    if isinstance(celo_integration, dict) and "integrated" in celo_integration:
+                        celo_integrated = celo_integration["integrated"]
+                    elif isinstance(celo_integration, bool):
+                        celo_integrated = celo_integration
                     else:
-                        # Safely get values with proper type checking
-                        overall_score = quality.get("overall_score", 0)
-                        if isinstance(overall_score, (int, float)):
-                            f.write(f"**Overall Score:** {overall_score:.2f}/100\n\n")
-                        else:
-                            f.write(f"**Overall Score:** 0.00/100\n\n")
-                        
-                        readability = quality.get("readability", 0)
-                        if isinstance(readability, (int, float)):
-                            f.write(f"**Readability and Documentation:** {readability:.2f}/100\n\n")
-                        else:
-                            f.write(f"**Readability and Documentation:** 0.00/100\n\n")
-                        
-                        standards = quality.get("standards", 0)
-                        if isinstance(standards, (int, float)):
-                            f.write(f"**Coding Standards and Best Practices:** {standards:.2f}/100\n\n")
-                        else:
-                            f.write(f"**Coding Standards and Best Practices:** 0.00/100\n\n")
-                        
-                        complexity = quality.get("complexity", 0)
-                        if isinstance(complexity, (int, float)):
-                            f.write(f"**Algorithm Complexity and Efficiency:** {complexity:.2f}/100\n\n")
-                        else:
-                            f.write(f"**Algorithm Complexity and Efficiency:** 0.00/100\n\n")
-                        
-                        testing = quality.get("testing", 0)
-                        if isinstance(testing, (int, float)):
-                            f.write(f"**Testing and Coverage:** {testing:.2f}/100\n\n")
-                        else:
-                            f.write(f"**Testing and Coverage:** 0.00/100\n\n")
+                        celo_integrated = False
+                    celo_status = "✅" if celo_integrated else "❌"
                 else:
-                    f.write(f"**Overall Score:** 0.00/100\n\n")
+                    celo_status = "❌"
 
-                    # AI Analysis if available
-                    if "ai_analysis" in quality:
-                        f.write("### AI Analysis\n\n")
-                        ai_analysis = quality["ai_analysis"]
-                        
-                        if "overall_analysis" in ai_analysis:
-                            f.write(f"**Overall Analysis:** {ai_analysis['overall_analysis']}\n\n")
-                            
-                        if "suggestions" in ai_analysis and ai_analysis["suggestions"]:
-                            f.write("**Suggestions for Improvement:**\n\n")
-                            for suggestion in ai_analysis["suggestions"]:
-                                f.write(f"- {suggestion}\n")
-                            f.write("\n")
-                            
-                        if "readability_reasoning" in ai_analysis:
-                            f.write(f"**Readability Assessment:** {ai_analysis['readability_reasoning']}\n\n")
-                            
-                        if "standards_reasoning" in ai_analysis:
-                            f.write(f"**Standards Assessment:** {ai_analysis['standards_reasoning']}\n\n")
-                            
-                        if "complexity_reasoning" in ai_analysis:
-                            f.write(f"**Complexity Assessment:** {ai_analysis['complexity_reasoning']}\n\n")
-                            
-                        if "testing_reasoning" in ai_analysis:
-                            f.write(f"**Testing Assessment:** {ai_analysis['testing_reasoning']}\n\n")
-                    
-                    # Metrics
-                    if "metrics" in quality:
-                        f.write("### Metrics\n\n")
-                        metrics = quality["metrics"]
-                        f.write(
-                            f"- **Total Files:** {metrics.get('file_count', 'N/A')}\n"
-                        )
-                        f.write(
-                            f"- **Test Files:** {metrics.get('test_file_count', 'N/A')}\n"
-                        )
-                        f.write(
-                            f"- **Documentation Files:** {metrics.get('doc_file_count', 'N/A')}\n"
-                        )
-                        
-                        if "code_lines" in metrics:
-                            f.write(
-                                f"- **Lines of Code:** {metrics.get('code_lines', 'N/A')}\n"
-                            )
-                        
-                        if "comment_lines" in metrics:
-                            f.write(
-                                f"- **Comment Lines:** {metrics.get('comment_lines', 'N/A')}\n"
-                            )
-                            
-                        if "code_files_analyzed" in metrics:
-                            f.write(
-                                f"- **Code Files Analyzed:** {metrics.get('code_files_analyzed', 'N/A')}\n"
-                            )
-                        
-                        f.write("\n")
-            else:
                 f.write(
-                    "Could not assess code quality due to an error or inaccessible repository.\n\n"
+                    f"| {project_name} | {score:.2f} | {celo_status} | [{github_url}]({github_url}) |\n"
+                )
+        
+        # Initialize progress bar for individual reports
+        progress_bar = tqdm(total=len(results), 
+                            desc="Generating Project Reports", 
+                            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt}")
+
+        # Generate individual reports
+        for idx, result in enumerate(results):
+            project_name = result["project_name"]
+            file_name = project_name.replace(" ", "_").lower()
+            report_path = os.path.join(output_dir, f"{file_name}.md")
+            
+            # Update progress description
+            progress_bar.set_description(f"Generating report for {project_name} ({idx+1}/{len(results)})")
+            
+            # Log progress
+            logger.info(f"Creating report for {project_name} ({idx+1}/{len(results)})")
+
+            with open(report_path, "w") as f:
+                f.write(f"# Project Analysis: {result['project_name']}\n\n")
+
+                # Project Overview
+                f.write("## Project Overview\n\n")
+                f.write(f"**Project Name:** {result['project_name']}\n\n")
+                f.write(f"**Project Description:** {result['project_description']}\n\n")
+                # Handle None/NaN project_url
+                project_url = result['project_url']
+                if project_url is None or isinstance(project_url, float) and pd.isna(project_url):
+                    f.write(f"**Project URL:** Not available\n\n")
+                else:
+                    f.write(f"**Project URL:** [{project_url}]({project_url})\n\n")
+                f.write(
+                    f"**GitHub URL:** [{result['project_github_url']}]({result['project_github_url']})\n\n"
                 )
 
-            # Celo Integration
-            f.write("## Celo Blockchain Integration\n\n")
+                # Repository details
+                if "analysis" in result and "repo_details" in result["analysis"]:
+                    repo = result["analysis"]["repo_details"]
+                    f.write("### Repository Statistics\n\n")
+                    f.write(f"- **Stars:** {repo.get('stars', 'N/A')}\n")
+                    f.write(f"- **Forks:** {repo.get('forks', 'N/A')}\n")
+                    f.write(f"- **Open Issues:** {repo.get('open_issues', 'N/A')}\n")
+                    f.write(f"- **Primary Language:** {repo.get('language', 'N/A')}\n")
+                    f.write(f"- **Last Updated:** {repo.get('last_update', 'N/A')}\n\n")
 
-            if "analysis" in result and "celo_integration" in result["analysis"]:
-                celo = result["analysis"]["celo_integration"]
+                # Code Quality
+                f.write("## Code Quality Assessment\n\n")
 
-                if isinstance(celo, bool):
-                    # If celo_integration is just a boolean
-                    integration_status = "Yes" if celo else "No"
-                    f.write(f"**Integrated with Celo:** {integration_status}\n\n")
-                elif isinstance(celo, dict):
-                    if "error" in celo:
-                        f.write(f"**Error:** {celo['error']}\n\n")
-                    else:
-                        # Get integration status safely
-                        if "integrated" in celo:
-                            integrated = celo["integrated"]
+                if "analysis" in result and "code_quality" in result["analysis"]:
+                    quality = result["analysis"]["code_quality"]
+
+                    if isinstance(quality, (int, float)):
+                        # If code_quality is just a number
+                        f.write(f"**Overall Score:** {quality:.2f}/100\n\n")
+                    elif isinstance(quality, dict):
+                        if "error" in quality:
+                            f.write(f"**Error:** {quality['error']}\n\n")
                         else:
-                            integrated = False
-                        integration_status = "Yes" if integrated else "No"
+                            # Safely get values with proper type checking
+                            overall_score = quality.get("overall_score", 0)
+                            if isinstance(overall_score, (int, float)):
+                                f.write(f"**Overall Score:** {overall_score:.2f}/100\n\n")
+                            else:
+                                f.write(f"**Overall Score:** 0.00/100\n\n")
+                            
+                            readability = quality.get("readability", 0)
+                            if isinstance(readability, (int, float)):
+                                f.write(f"**Readability and Documentation:** {readability:.2f}/100\n\n")
+                            else:
+                                f.write(f"**Readability and Documentation:** 0.00/100\n\n")
+                            
+                            standards = quality.get("standards", 0)
+                            if isinstance(standards, (int, float)):
+                                f.write(f"**Coding Standards and Best Practices:** {standards:.2f}/100\n\n")
+                            else:
+                                f.write(f"**Coding Standards and Best Practices:** 0.00/100\n\n")
+                            
+                            complexity = quality.get("complexity", 0)
+                            if isinstance(complexity, (int, float)):
+                                f.write(f"**Algorithm Complexity and Efficiency:** {complexity:.2f}/100\n\n")
+                            else:
+                                f.write(f"**Algorithm Complexity and Efficiency:** 0.00/100\n\n")
+                            
+                            testing = quality.get("testing", 0)
+                            if isinstance(testing, (int, float)):
+                                f.write(f"**Testing and Coverage:** {testing:.2f}/100\n\n")
+                            else:
+                                f.write(f"**Testing and Coverage:** 0.00/100\n\n")
+                    else:
+                        f.write(f"**Overall Score:** 0.00/100\n\n")
 
+                        # AI Analysis if available
+                        if "ai_analysis" in quality:
+                            f.write("### AI Analysis\n\n")
+                            ai_analysis = quality["ai_analysis"]
+                            
+                            if "overall_analysis" in ai_analysis:
+                                f.write(f"**Overall Analysis:** {ai_analysis['overall_analysis']}\n\n")
+                                
+                            if "suggestions" in ai_analysis and ai_analysis["suggestions"]:
+                                f.write("**Suggestions for Improvement:**\n\n")
+                                for suggestion in ai_analysis["suggestions"]:
+                                    f.write(f"- {suggestion}\n")
+                                f.write("\n")
+                                
+                            if "readability_reasoning" in ai_analysis:
+                                f.write(f"**Readability Assessment:** {ai_analysis['readability_reasoning']}\n\n")
+                                
+                            if "standards_reasoning" in ai_analysis:
+                                f.write(f"**Standards Assessment:** {ai_analysis['standards_reasoning']}\n\n")
+                                
+                            if "complexity_reasoning" in ai_analysis:
+                                f.write(f"**Complexity Assessment:** {ai_analysis['complexity_reasoning']}\n\n")
+                                
+                            if "testing_reasoning" in ai_analysis:
+                                f.write(f"**Testing Assessment:** {ai_analysis['testing_reasoning']}\n\n")
+                        
+                        # Metrics
+                        if "metrics" in quality:
+                            f.write("### Metrics\n\n")
+                            metrics = quality["metrics"]
+                            f.write(
+                                f"- **Total Files:** {metrics.get('file_count', 'N/A')}\n"
+                            )
+                            f.write(
+                                f"- **Test Files:** {metrics.get('test_file_count', 'N/A')}\n"
+                            )
+                            f.write(
+                                f"- **Documentation Files:** {metrics.get('doc_file_count', 'N/A')}\n"
+                            )
+                            
+                            if "code_lines" in metrics:
+                                f.write(
+                                    f"- **Lines of Code:** {metrics.get('code_lines', 'N/A')}\n"
+                                )
+                            
+                            if "comment_lines" in metrics:
+                                f.write(
+                                    f"- **Comment Lines:** {metrics.get('comment_lines', 'N/A')}\n"
+                                )
+                                
+                            if "code_files_analyzed" in metrics:
+                                f.write(
+                                    f"- **Code Files Analyzed:** {metrics.get('code_files_analyzed', 'N/A')}\n"
+                                )
+                            
+                            f.write("\n")
+                else:
+                    f.write(
+                        "Could not assess code quality due to an error or inaccessible repository.\n\n"
+                    )
+
+                # Celo Integration
+                f.write("## Celo Blockchain Integration\n\n")
+
+                if "analysis" in result and "celo_integration" in result["analysis"]:
+                    celo = result["analysis"]["celo_integration"]
+
+                    if isinstance(celo, bool):
+                        # If celo_integration is just a boolean
+                        integration_status = "Yes" if celo else "No"
                         f.write(f"**Integrated with Celo:** {integration_status}\n\n")
+                    elif isinstance(celo, dict):
+                        if "error" in celo:
+                            f.write(f"**Error:** {celo['error']}\n\n")
+                        else:
+                            # Get integration status safely
+                            if "integrated" in celo:
+                                integrated = celo["integrated"]
+                            else:
+                                integrated = False
+                            integration_status = "Yes" if integrated else "No"
 
-                        if integrated and "evidence" in celo and isinstance(celo["evidence"], list):
-                            f.write("### Evidence of Integration\n\n")
-                            for evidence in celo["evidence"]:
-                                if isinstance(evidence, dict) and "keyword" in evidence and "file" in evidence:
-                                    f.write(
-                                        f"- Found keyword '{evidence['keyword']}' in file: {evidence['file']}\n"
-                                    )
-                            f.write("\n")
-                        
-                        # Add AI analysis of Celo integration if available
-                        if integrated and "analysis" in celo:
-                            f.write("### Integration Analysis\n\n")
-                            f.write(f"{celo['analysis']}\n\n")
+                            f.write(f"**Integrated with Celo:** {integration_status}\n\n")
+
+                            if integrated and "evidence" in celo and isinstance(celo["evidence"], list):
+                                f.write("### Evidence of Integration\n\n")
+                                for evidence in celo["evidence"]:
+                                    if isinstance(evidence, dict) and "keyword" in evidence and "file" in evidence:
+                                        f.write(
+                                            f"- Found keyword '{evidence['keyword']}' in file: {evidence['file']}\n"
+                                        )
+                                f.write("\n")
+                            
+                            # Add AI analysis of Celo integration if available
+                            if integrated and "analysis" in celo:
+                                f.write("### Integration Analysis\n\n")
+                                f.write(f"{celo['analysis']}\n\n")
+                    else:
+                        # Default case if celo_integration is something unexpected
+                        f.write(f"**Integrated with Celo:** No\n\n")
                 else:
-                    # Default case if celo_integration is something unexpected
-                    f.write(f"**Integrated with Celo:** No\n\n")
-            else:
-                f.write(
-                    "Could not assess Celo integration due to an error or inaccessible repository.\n\n"
-                )
+                    f.write(
+                        "Could not assess Celo integration due to an error or inaccessible repository.\n\n"
+                    )
 
-            # Additional Notes
-            f.write("## Additional Notes\n\n")
+                # Additional Notes
+                f.write("## Additional Notes\n\n")
 
-            if "analysis" in result and "error" in result["analysis"]:
-                f.write(f"- {result['analysis']['error']}\n")
-            else:
-                f.write("No additional notes.\n")
-
-    print(f"Reports generated in {output_dir} directory")
+                if "analysis" in result and "error" in result["analysis"]:
+                    f.write(f"- {result['analysis']['error']}\n")
+                else:
+                    f.write("No additional notes.\n")
+            
+            # Update progress bar
+            progress_bar.update(1)
+        
+        # Close progress bar
+        progress_bar.close()
+        
+        # Save raw results to JSON
+        spinner.update(f"Saving raw results to JSON")
+        logger.info(f"Saving raw results to {output_dir}/results.json")
+        with open(os.path.join(output_dir, "results.json"), "w") as f:
+            json.dump(results, f, indent=2)
+        
+        # Final spinner update
+        spinner.stop(f"Successfully generated all reports in {output_dir}")
+        logger.info(f"Report generation completed successfully")
+        
+    except Exception as e:
+        error_msg = f"Error generating reports: {str(e)}"
+        spinner.stop(f"Error generating reports: {str(e)}")
+        logger.error(error_msg)
+        raise Exception(error_msg)
 
 
 def main():
     """Main function to run the analysis."""
+    # Show banner
+    banner = """
+    ██████╗███████╗██╗      ██████╗     ██╗  ██╗ █████╗  ██████╗██╗  ██╗ █████╗ ████████╗██╗  ██╗ ██████╗ ███╗   ██╗
+    ██╔════╝██╔════╝██║     ██╔═══██╗    ██║  ██║██╔══██╗██╔════╝██║ ██╔╝██╔══██╗╚══██╔══╝██║  ██║██╔═══██╗████╗  ██║
+    ██║     █████╗  ██║     ██║   ██║    ███████║███████║██║     █████╔╝ ███████║   ██║   ███████║██║   ██║██╔██╗ ██║
+    ██║     ██╔══╝  ██║     ██║   ██║    ██╔══██║██╔══██║██║     ██╔═██╗ ██╔══██║   ██║   ██╔══██║██║   ██║██║╚██╗██║
+    ╚██████╗███████╗███████╗╚██████╔╝    ██║  ██║██║  ██║╚██████╗██║  ██╗██║  ██║   ██║   ██║  ██║╚██████╔╝██║ ╚████║
+    ╚═════╝╚══════╝╚══════╝ ╚═════╝     ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝   ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝
+                                                                                                                                                            
+    🌟 Project Analysis Tool 🌟
+    """
+    print(banner)
+    
+    # Setup argument parser
     parser = argparse.ArgumentParser(
         description="Analyze GitHub projects for Celo hackathon"
     )
@@ -357,29 +538,63 @@ def main():
         "--config", default="config.json", help="Path to configuration file"
     )
     parser.add_argument("--output", default="reports", help="Directory to save reports")
+    parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
     args = parser.parse_args()
-
+    
+    # Set logging level based on verbosity
+    if args.verbose:
+        logger.setLevel(logging.DEBUG)
+        logger.debug("Verbose logging enabled")
+    
+    # Print startup information
+    print(f"🚀 Starting Celo Hackathon Project Analysis")
+    print(f"📊 Input: {args.excel}")
+    print(f"⚙️ Config: {args.config}")
+    print(f"📁 Output: {args.output}")
+    print(f"🔍 Analysis beginning...\n")
+    
+    start_time = time.time()
+    
     try:
+        # Create a global spinner for overall progress
+        spinner = Spinner("Initializing analysis")
+        spinner.start()
+        
         # Load projects from Excel
+        spinner.update("Loading project data from Excel")
         projects_df = load_projects(args.excel)
-
+        
+        # Update spinner with project count
+        project_count = len(projects_df)
+        spinner.update(f"Analyzing {project_count} projects")
+        
         # Analyze projects
         results = analyze_projects(projects_df, args.config)
-
+        
         # Generate reports
+        spinner.update(f"Generating reports for {project_count} projects")
         generate_report(results, args.output)
-
-        # Save raw results to JSON for further processing if needed
-        with open(os.path.join(args.output, "results.json"), "w") as f:
-            json.dump(results, f, indent=2)
-
-        print(f"Analysis completed. Reports saved to {args.output} directory.")
+        
+        # Calculate elapsed time
+        elapsed_time = time.time() - start_time
+        minutes, seconds = divmod(elapsed_time, 60)
+        
+        # Show completion message
+        print(f"\n✅ Analysis completed in {int(minutes)}m {int(seconds)}s")
+        print(f"📊 Analyzed {project_count} projects")
+        print(f"📝 Reports saved to {args.output} directory")
+        print(f"🙏 Thank you for using the Celo Hackathon Analysis Tool!")
+        
+        # Log completion
+        logger.info(f"Analysis completed successfully in {elapsed_time:.2f} seconds")
+        
+        return 0
 
     except Exception as e:
-        print(f"Error: {str(e)}")
+        logger.error(f"Error in main execution: {str(e)}", exc_info=True)
+        print(f"\n❌ Error: {str(e)}")
+        print("Please check the logs for more details.")
         return 1
-
-    return 0
 
 
 if __name__ == "__main__":

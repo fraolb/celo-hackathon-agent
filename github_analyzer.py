@@ -175,21 +175,28 @@ class GitHubLangChainAnalyzer:
         
         return self.repo_owner, self.repo_name
         
-    def analyze_repository(self, repo_url: str) -> Dict[str, Any]:
+    def analyze_repository(self, repo_url: str, callback=None) -> Dict[str, Any]:
         """
         Analyze a GitHub repository for code quality and Celo integration.
         
         Args:
             repo_url: URL of the GitHub repository
+            callback: Optional callback function to report progress
             
         Returns:
             Dictionary containing analysis results
         """
         try:
             # Setup GitHub toolkit and get repo information
+            if callback:
+                callback(f"Setting up GitHub tools for {repo_url}")
+            
             repo_owner, repo_name = self._setup_github_tools(repo_url)
             
             # Get repository details (timeout: 30 seconds)
+            if callback:
+                callback(f"Fetching repository details for {repo_owner}/{repo_name}")
+                
             repo_details = self._get_repository_details_with_timeout(repo_owner, repo_name)
             if repo_details is None:
                 repo_details = {
@@ -202,8 +209,11 @@ class GitHubLangChainAnalyzer:
                     "last_update": "",
                     "language": ""
                 }
-                
+            
             # Analyze code quality using LangChain and Anthropic (timeout: 60 seconds)
+            if callback:
+                callback(f"Analyzing code quality for {repo_owner}/{repo_name}")
+                
             code_quality = self._analyze_code_quality_with_timeout(repo_owner, repo_name)
             if code_quality is None:
                 code_quality = {
@@ -221,6 +231,9 @@ class GitHubLangChainAnalyzer:
                 }
             
             # Check for Celo integration (timeout: 60 seconds)
+            if callback:
+                callback(f"Checking Celo integration for {repo_owner}/{repo_name}")
+                
             celo_integration = self._check_celo_integration_with_timeout(repo_owner, repo_name)
             if celo_integration is None:
                 celo_integration = {
@@ -230,6 +243,9 @@ class GitHubLangChainAnalyzer:
                 }
             
             # Compile results
+            if callback:
+                callback(f"Compiling analysis results for {repo_owner}/{repo_name}")
+                
             results = {
                 "repo_details": repo_details,
                 "code_quality": code_quality,
@@ -239,6 +255,9 @@ class GitHubLangChainAnalyzer:
             return results
             
         except Exception as e:
+            if callback:
+                callback(f"Error analyzing {repo_url}: {str(e)}")
+                
             return {
                 "error": f"Error analyzing repository: {str(e)}",
                 "code_quality": 0,
