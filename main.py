@@ -39,8 +39,9 @@ load_dotenv()
 class Spinner:
     def __init__(self, message="Loading"):
         self.message = message
-        # Fancy spinner frames
-        self.frames = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"]
+        # Simple spinner frames that work consistently across terminals
+        self.frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        self.fallback_frames = ["-", "\\", "|", "/"]  # Fallback if unicode doesn't display well
         self.delay = 0.1
         self.is_spinning = False
         self.index = 0
@@ -56,28 +57,50 @@ class Spinner:
             'magenta': '\033[95m'
         }
         
+        # Choose the appropriate frame set based on terminal capability
+        try:
+            # Try printing a unicode character
+            print("\u2588", end="", flush=True)
+            print("\r", end="", flush=True)  # Clear the test character
+            self.current_frames = self.frames
+        except UnicodeEncodeError:
+            # Fall back to simple ASCII frames if unicode isn't supported
+            self.current_frames = self.fallback_frames
+        
     def start(self):
         self.is_spinning = True
         self.start_time = time.time()
-        spinner = f"{self.colors['cyan']}{self.frames[self.index]}{self.colors['reset']}"
+        
+        # Clear the line first
+        print("\r" + " " * 120, end="", flush=True)
+        
+        spinner = f"{self.colors['cyan']}{self.current_frames[self.index]}{self.colors['reset']}"
         message = f"{self.colors['bold']}{self.message}{self.colors['reset']}"
-        print(f"\r{spinner} {message}", end="")
+        print(f"\r{spinner} {message}", end="", flush=True)
         
     def update(self, message=None):
         if message:
             self.message = message
-        self.index = (self.index + 1) % len(self.frames)
+            
+        # Single frame update with clear line first
+        self.index = (self.index + 1) % len(self.current_frames)
         elapsed = time.time() - self.start_time
         
-        spinner = f"{self.colors['cyan']}{self.frames[self.index]}{self.colors['reset']}"
+        # Clear line completely first
+        print("\r" + " " * 120, end="", flush=True)
+        
+        spinner = f"{self.colors['cyan']}{self.current_frames[self.index]}{self.colors['reset']}"
         message = f"{self.colors['bold']}{self.message}{self.colors['reset']}"
         elapsed_text = f"{self.colors['yellow']}({elapsed:.1f}s){self.colors['reset']}"
         
-        print(f"\r{spinner} {message} {elapsed_text}", end="")
+        print(f"\r{spinner} {message} {elapsed_text}", end="", flush=True)
         
     def stop(self, message=None):
         final_message = message if message else self.message
         elapsed = time.time() - self.start_time
+        
+        # Clear line completely first
+        print("\r" + " " * 120, end="", flush=True)
         
         check = f"{self.colors['green']}✓{self.colors['reset']}"
         message = f"{self.colors['bold']}{final_message}{self.colors['reset']}"
@@ -193,8 +216,8 @@ def analyze_projects(
         try:
             # Define a callback function to update the spinner
             def progress_callback(message):
+                # The spinner's update method now includes animation
                 spinner.update(message)
-                time.sleep(0.2)  # Small delay to see the spinner update
             
             # Analyze repository with progress updates
             repo_analysis = analyzer.analyze_repository(
@@ -202,6 +225,8 @@ def analyze_projects(
                 callback=progress_callback
             )
             
+            # Clear the line first to avoid overlap issues
+            print(f"\r{' ' * 100}", end="", flush=True)
             # Final update when done
             spinner.stop(f"Completed analysis for {project_name}")
             
@@ -257,6 +282,8 @@ def analyze_projects(
         
     # Close progress bar
     progress_bar.close()
+    # Add space after progress bar
+    print("")
     logger.info(f"Completed analysis of all {total_projects} projects")
     
     return results
@@ -535,6 +562,8 @@ def generate_report(results: List[Dict[str, Any]], output_dir: str = "reports") 
         
         # Close progress bar
         progress_bar.close()
+        # Add space after progress bar
+        print("")
         
         # Save raw results to JSON
         spinner.update(f"Saving raw results to JSON")
