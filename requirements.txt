@@ -1,0 +1,7 @@
+pandas
+langchain
+langchain-community
+langchain-core
+openpyxl
+pygithub
+PyYAML
