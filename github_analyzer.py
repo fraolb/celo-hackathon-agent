@@ -2,9 +2,11 @@ import os
 import json
 import base64
 import re
+import time
 from typing import Dict, List, Tuple, Any, Optional
 from dotenv import load_dotenv
 from pathlib import Path
+import signal
 
 # LangChain imports
 from langchain_core.prompts import ChatPromptTemplate
@@ -29,6 +31,34 @@ from prompts.celo_integration import (
 
 # Load environment variables
 load_dotenv()
+
+
+# Timeout decorator
+class TimeoutError(Exception):
+    pass
+
+
+def timeout_handler(signum, frame):
+    raise TimeoutError("Function execution timed out")
+
+
+def with_timeout(seconds):
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            # Set the timeout handler
+            signal.signal(signal.SIGALRM, timeout_handler)
+            signal.alarm(seconds)
+            try:
+                result = func(*args, **kwargs)
+                signal.alarm(0)  # Disable the alarm
+                return result
+            except TimeoutError:
+                print(f"Function {func.__name__} timed out after {seconds} seconds")
+                return None
+            finally:
+                signal.alarm(0)  # Ensure the alarm is disabled
+        return wrapper
+    return decorator
 
 
 class GitHubLangChainAnalyzer:
@@ -159,14 +189,45 @@ class GitHubLangChainAnalyzer:
             # Setup GitHub toolkit and get repo information
             repo_owner, repo_name = self._setup_github_tools(repo_url)
             
-            # Get repository details
-            repo_details = self._get_repository_details(repo_owner, repo_name)
+            # Get repository details (timeout: 30 seconds)
+            repo_details = self._get_repository_details_with_timeout(repo_owner, repo_name)
+            if repo_details is None:
+                repo_details = {
+                    "name": repo_name,
+                    "description": f"Repository for {repo_owner}/{repo_name}",
+                    "url": repo_url,
+                    "stars": 0,
+                    "forks": 0,
+                    "open_issues": 0,
+                    "last_update": "",
+                    "language": ""
+                }
                 
-            # Analyze code quality using LangChain and Anthropic
-            code_quality = self._analyze_code_quality(repo_owner, repo_name)
+            # Analyze code quality using LangChain and Anthropic (timeout: 60 seconds)
+            code_quality = self._analyze_code_quality_with_timeout(repo_owner, repo_name)
+            if code_quality is None:
+                code_quality = {
+                    "overall_score": 50,
+                    "readability": 50,
+                    "standards": 50,
+                    "complexity": 50,
+                    "testing": 50,
+                    "metrics": {
+                        "file_count": 0,
+                        "test_file_count": 0,
+                        "doc_file_count": 0
+                    },
+                    "error": "Analysis timed out"
+                }
             
-            # Check for Celo integration
-            celo_integration = self._check_celo_integration(repo_owner, repo_name)
+            # Check for Celo integration (timeout: 60 seconds)
+            celo_integration = self._check_celo_integration_with_timeout(repo_owner, repo_name)
+            if celo_integration is None:
+                celo_integration = {
+                    "integrated": repo_owner.lower() == "celo-org" or "celo" in repo_name.lower(),
+                    "evidence": [],
+                    "error": "Analysis timed out"
+                }
             
             # Compile results
             results = {
@@ -184,6 +245,21 @@ class GitHubLangChainAnalyzer:
                 "celo_integration": False
             }
     
+    @with_timeout(30)
+    def _get_repository_details_with_timeout(self, repo_owner: str, repo_name: str) -> Dict[str, Any]:
+        """Timeout wrapper for _get_repository_details"""
+        return self._get_repository_details(repo_owner, repo_name)
+        
+    @with_timeout(60)
+    def _analyze_code_quality_with_timeout(self, repo_owner: str, repo_name: str) -> Dict[str, Any]:
+        """Timeout wrapper for _analyze_code_quality"""
+        return self._analyze_code_quality(repo_owner, repo_name)
+        
+    @with_timeout(60)
+    def _check_celo_integration_with_timeout(self, repo_owner: str, repo_name: str) -> Dict[str, Any]:
+        """Timeout wrapper for _check_celo_integration"""
+        return self._check_celo_integration(repo_owner, repo_name)
+        
     def _get_repository_details(self, repo_owner: str, repo_name: str) -> Dict[str, Any]:
         """
         Get repository details using PyGithub.

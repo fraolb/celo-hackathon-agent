@@ -14,12 +14,12 @@ Consider:
 3. Are there dependencies or imports related to Celo?
 
 Respond in JSON format:
-{
+{{
     "is_celo_integrated": true/false,
     "confidence": 0-100,
     "evidence": ["reason1", "reason2", ...],
     "explanation": "brief explanation"
-}
+}}
 """
 
 HUMAN_CELO_INTEGRATION_PROMPT = """Analyze this GitHub repository for Celo blockchain integration:

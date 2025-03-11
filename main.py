@@ -61,11 +61,23 @@ def analyze_projects(
         project_name = row["project_name"]
         project_description = row["project_description"]
         project_github_url = row["project_github_url"]
-        project_usernames = (
-            row["project_usernames"]
-            if isinstance(row["project_usernames"], list)
-            else []
-        )
+        # Convert project_usernames to a list if it's a string or NaN value
+        project_usernames = []
+        if isinstance(row["project_usernames"], list):
+            project_usernames = row["project_usernames"]
+        elif isinstance(row["project_usernames"], str):
+            # Check if the string looks like a list representation
+            if row["project_usernames"].startswith('[') and row["project_usernames"].endswith(']'):
+                try:
+                    import ast
+                    project_usernames = ast.literal_eval(row["project_usernames"])
+                except (SyntaxError, ValueError):
+                    # If parsing fails, treat as comma-separated
+                    project_usernames = [name.strip() for name in row["project_usernames"].split(',')]
+            else:
+                # Handle comma-separated strings
+                project_usernames = [name.strip() for name in row["project_usernames"].split(',')]
+        # Otherwise, leave as empty list
         project_url = row["project_url"]
 
         print(f"Analyzing project: {project_name}")
@@ -151,9 +163,12 @@ def generate_report(results: List[Dict[str, Any]], output_dir: str = "reports") 
             f.write("## Project Overview\n\n")
             f.write(f"**Project Name:** {result['project_name']}\n\n")
             f.write(f"**Project Description:** {result['project_description']}\n\n")
-            f.write(
-                f"**Project URL:** [{result['project_url']}]({result['project_url']})\n\n"
-            )
+            # Handle None/NaN project_url
+            project_url = result['project_url']
+            if project_url is None or isinstance(project_url, float) and pd.isna(project_url):
+                f.write(f"**Project URL:** Not available\n\n")
+            else:
+                f.write(f"**Project URL:** [{project_url}]({project_url})\n\n")
             f.write(
                 f"**GitHub URL:** [{result['project_github_url']}]({result['project_github_url']})\n\n"
             )
