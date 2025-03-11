@@ -152,7 +152,7 @@ def load_projects(excel_path: str) -> pd.DataFrame:
             "project_name",
             "project_description",
             "project_github_url",
-            "project_usernames",
+            "project_owner_github_url",
             "project_url",
         ]
 
@@ -204,107 +204,172 @@ def analyze_projects(
     for index, row in projects_df.iterrows():
         project_name = row["project_name"]
         project_description = row["project_description"]
-        project_github_url = row["project_github_url"]
+        raw_github_urls = row["project_github_url"]
         
         # Update progress bar description - keep it simple
         progress_bar.set_description(f"Analyzing Projects")
         
-        # Convert project_usernames to a list if it's a string or NaN value
-        project_usernames = []
-        if isinstance(row["project_usernames"], list):
-            project_usernames = row["project_usernames"]
-        elif isinstance(row["project_usernames"], str):
-            # Check if the string looks like a list representation
-            if row["project_usernames"].startswith('[') and row["project_usernames"].endswith(']'):
-                try:
-                    import ast
-                    project_usernames = ast.literal_eval(row["project_usernames"])
-                except (SyntaxError, ValueError):
-                    # If parsing fails, treat as comma-separated
-                    project_usernames = [name.strip() for name in row["project_usernames"].split(',')]
-            else:
-                # Handle comma-separated strings
-                project_usernames = [name.strip() for name in row["project_usernames"].split(',')]
+        # Get project_owner_github_url (comma-separated GitHub user URLs)
+        # This field contains GitHub URLs of the project owners/developers
+        raw_owner_urls = row["project_owner_github_url"]
+        
+        # Process owner GitHub URLs (handle comma-separated URLs)
+        owner_github_urls = []
+        if isinstance(raw_owner_urls, str):
+            # Split by comma and strip whitespace
+            owner_github_urls = [url.strip() for url in raw_owner_urls.split(',') if url.strip()]
+        elif pd.notna(raw_owner_urls):  # Check if it's not NaN
+            # If it's not a string (might be a single URL without commas)
+            owner_github_urls = [str(raw_owner_urls)]
         # Otherwise, leave as empty list
         project_url = row["project_url"]
-
-        logger.info(f"Analyzing project {index+1}/{total_projects}: {project_name}")
         
-        # Create a spinner for this project
-        spinner = Spinner(f"Fetching GitHub repository for {project_name}")
-        spinner.start()
-
-        # Analyze GitHub repository
-        try:
-            # Define a callback function to update the spinner
-            def progress_callback(message):
-                # The spinner's update method now includes animation
-                spinner.update(message)
-                
-                # Helper for manual animation during long operations
-                if "Analyzing" in message or "Checking" in message:
-                    # Manually force a few extra animation frames to show activity
-                    for _ in range(3):
-                        time.sleep(0.1)
-                        spinner.update(message)
+        # Process the GitHub URLs (handle comma-separated URLs)
+        github_urls = []
+        if isinstance(raw_github_urls, str):
+            # Split by comma and strip whitespace
+            github_urls = [url.strip() for url in raw_github_urls.split(',') if url.strip()]
+        else:
+            # If it's not a string (might be a single URL without commas or NaN)
+            if pd.notna(raw_github_urls):
+                github_urls = [str(raw_github_urls)]
+        
+        # If no valid GitHub URLs, create a default result and continue
+        if not github_urls:
+            logger.warning(f"No valid GitHub URLs found for project {project_name}")
             
-            # Analyze repository with progress updates
-            repo_analysis = analyzer.analyze_repository(
-                project_github_url, 
-                callback=progress_callback
-            )
-            
-            # Clear the line first to avoid overlap issues
-            print(f"\r{' ' * 100}", end="", flush=True)
-            # Final update when done
-            spinner.stop(f"Completed analysis for {project_name}")
-            
-            # Combine project info with analysis results
+            # Create a default result with error
             project_result = {
                 "project_name": project_name,
                 "project_description": project_description,
-                "project_github_url": project_github_url,
-                "project_usernames": project_usernames,
-                "project_url": project_url,
-                "analysis": repo_analysis,
-            }
-
-            results.append(project_result)
-            
-            # Basic success message
-            logger.info(f"Successfully analyzed {project_name}")
-            
-            # Get the code quality score
-            if "code_quality" in repo_analysis:
-                if isinstance(repo_analysis["code_quality"], dict) and "overall_score" in repo_analysis["code_quality"]:
-                    score = repo_analysis["code_quality"]["overall_score"]
-                    logger.info(f"Code quality score for {project_name}: {score:.2f}/100")
-                    
-            # Get Celo integration status
-            if "celo_integration" in repo_analysis:
-                if isinstance(repo_analysis["celo_integration"], dict) and "integrated" in repo_analysis["celo_integration"]:
-                    is_integrated = repo_analysis["celo_integration"]["integrated"]
-                    logger.info(f"Celo integration for {project_name}: {'Yes' if is_integrated else 'No'}")
-            
-        except Exception as e:
-            spinner.stop(f"Failed to analyze {project_name}: {str(e)}")
-            logger.error(f"Error analyzing {project_name}: {str(e)}")
-            
-            # Add error result
-            project_result = {
-                "project_name": project_name,
-                "project_description": project_description,
-                "project_github_url": project_github_url,
-                "project_usernames": project_usernames,
+                "project_github_url": "No valid GitHub URL provided",
+                "project_owner_github_url": owner_github_urls,
                 "project_url": project_url,
                 "analysis": {
-                    "error": f"Error analyzing repository: {str(e)}",
+                    "error": "No valid GitHub URL provided",
                     "code_quality": 0,
                     "celo_integration": False
                 }
             }
             
             results.append(project_result)
+            progress_bar.update(1)
+            continue
+        
+        # Log the analysis
+        logger.info(f"Analyzing project {index+1}/{total_projects}: {project_name} with {len(github_urls)} repo(s)")
+        
+        # Initialize combined analysis results
+        combined_analysis = {
+            "repo_details": [],
+            "code_quality": {"overall_score": 0, "repositories_analyzed": 0},
+            "celo_integration": {"integrated": False, "evidence": [], "repositories_with_celo": 0}
+        }
+        
+        # Create a spinner
+        spinner = Spinner(f"Analyzing {len(github_urls)} GitHub repositories for {project_name}")
+        spinner.start()
+        
+        # Analyze each GitHub repository
+        for url_index, github_url in enumerate(github_urls):
+            try:
+                # Skip empty URLs
+                if not github_url or not github_url.startswith('http'):
+                    logger.warning(f"Skipping invalid URL: {github_url}")
+                    continue
+                
+                # Update spinner with current repo
+                spinner.update(f"Analyzing repository {url_index+1}/{len(github_urls)}: {github_url}")
+                
+                # Define a callback function to update the spinner
+                def progress_callback(message):
+                    # The spinner's update method now includes animation
+                    updated_message = f"[{url_index+1}/{len(github_urls)}] {message}"
+                    spinner.update(updated_message)
+                    
+                    # Helper for manual animation during long operations
+                    if "Analyzing" in message or "Checking" in message:
+                        # Manually force a few extra animation frames to show activity
+                        for _ in range(3):
+                            time.sleep(0.1)
+                            spinner.update(updated_message)
+                
+                # Analyze repository with progress updates
+                repo_analysis = analyzer.analyze_repository(
+                    github_url, 
+                    callback=progress_callback
+                )
+                
+                # Store repo details
+                if "repo_details" in repo_analysis:
+                    combined_analysis["repo_details"].append(repo_analysis["repo_details"])
+                
+                # Update combined code quality score
+                if "code_quality" in repo_analysis:
+                    quality = repo_analysis["code_quality"]
+                    if isinstance(quality, dict) and "overall_score" in quality:
+                        # Increment count and add to total score
+                        combined_analysis["code_quality"]["repositories_analyzed"] += 1
+                        combined_analysis["code_quality"]["overall_score"] += quality["overall_score"]
+                
+                # Update Celo integration status
+                if "celo_integration" in repo_analysis:
+                    celo_integration = repo_analysis["celo_integration"]
+                    if isinstance(celo_integration, dict) and "integrated" in celo_integration:
+                        if celo_integration["integrated"]:
+                            # Mark project as Celo-integrated if any repo is integrated
+                            combined_analysis["celo_integration"]["integrated"] = True
+                            combined_analysis["celo_integration"]["repositories_with_celo"] += 1
+                            
+                            # Append evidence if available
+                            if "evidence" in celo_integration and celo_integration["evidence"]:
+                                # Add repo name to evidence for clarity
+                                for evidence in celo_integration["evidence"]:
+                                    evidence["repository"] = github_url
+                                combined_analysis["celo_integration"]["evidence"].extend(celo_integration["evidence"])
+            
+            except Exception as e:
+                logger.error(f"Error analyzing {github_url}: {str(e)}")
+                spinner.update(f"Error analyzing {github_url}: {str(e)}")
+        
+        # Calculate the average code quality score if we analyzed any repositories
+        if combined_analysis["code_quality"]["repositories_analyzed"] > 0:
+            avg_score = combined_analysis["code_quality"]["overall_score"] / combined_analysis["code_quality"]["repositories_analyzed"]
+            combined_analysis["code_quality"]["overall_score"] = avg_score
+        
+        # Clear the line first to avoid overlap issues
+        print(f"\r{' ' * 100}", end="", flush=True)
+        
+        # Final update when done
+        spinner.stop(f"Completed analysis of {len(github_urls)} repositories for {project_name}")
+        
+        # Combine project info with analysis results
+        project_result = {
+            "project_name": project_name,
+            "project_description": project_description,
+            "project_github_url": raw_github_urls,  # Keep the original value
+            "github_urls": github_urls,  # Add the list of URLs
+            "project_owner_github_url": owner_github_urls,
+            "project_url": project_url,
+            "analysis": combined_analysis,
+        }
+
+        results.append(project_result)
+        
+        # Basic success message
+        logger.info(f"Successfully analyzed {project_name}")
+            
+        # Log code quality score and Celo integration status
+        if "code_quality" in combined_analysis:
+            score = combined_analysis["code_quality"].get("overall_score", 0)
+            repos_analyzed = combined_analysis["code_quality"].get("repositories_analyzed", 0)
+            logger.info(f"Code quality score for {project_name}: {score:.2f}/100 (based on {repos_analyzed} repositories)")
+                    
+        # Log Celo integration status
+        if "celo_integration" in combined_analysis:
+            is_integrated = combined_analysis["celo_integration"].get("integrated", False)
+            repos_with_celo = combined_analysis["celo_integration"].get("repositories_with_celo", 0)
+            logger.info(f"Celo integration for {project_name}: {'Yes' if is_integrated else 'No'} ({repos_with_celo}/{len(github_urls)} repositories)")
         
         # Update progress bar
         progress_bar.update(1)
@@ -348,35 +413,61 @@ def generate_report(results: List[Dict[str, Any]], output_dir: str = "reports") 
 
             for result in results:
                 project_name = result["project_name"]
-                github_url = result["project_github_url"]
+                
+                # Handle multiple GitHub URLs
+                if "github_urls" in result and result["github_urls"]:
+                    # For multiple URLs, show the first one with a link and note the count
+                    github_urls = result["github_urls"]
+                    if len(github_urls) > 1:
+                        github_url_display = f"[{github_urls[0]}]({github_urls[0]}) +{len(github_urls)-1} more"
+                    else:
+                        github_url_display = f"[{github_urls[0]}]({github_urls[0]})"
+                else:
+                    # Fallback to the original field if github_urls isn't available
+                    github_url = result["project_github_url"]
+                    github_url_display = f"[{github_url}]({github_url})"
 
                 # Get code quality score
                 if "analysis" in result and "code_quality" in result["analysis"]:
                     code_quality = result["analysis"]["code_quality"]
                     if isinstance(code_quality, dict) and "overall_score" in code_quality:
                         score = code_quality["overall_score"]
+                        repos_analyzed = code_quality.get("repositories_analyzed", 1)
+                        # Add repository count if multiple repositories
+                        score_display = f"{score:.2f}" if repos_analyzed <= 1 else f"{score:.2f} ({repos_analyzed} repos)"
                     elif isinstance(code_quality, (int, float)):
                         score = code_quality
+                        score_display = f"{score:.2f}"
                     else:
                         score = 0
+                        score_display = "0.00"
                 else:
                     score = 0
+                    score_display = "0.00"
 
                 # Get Celo integration status
                 if "analysis" in result and "celo_integration" in result["analysis"]:
                     celo_integration = result["analysis"]["celo_integration"]
                     if isinstance(celo_integration, dict) and "integrated" in celo_integration:
                         celo_integrated = celo_integration["integrated"]
+                        repos_with_celo = celo_integration.get("repositories_with_celo", 0)
                     elif isinstance(celo_integration, bool):
                         celo_integrated = celo_integration
+                        repos_with_celo = 1 if celo_integrated else 0
                     else:
                         celo_integrated = False
-                    celo_status = "✅" if celo_integrated else "❌"
+                        repos_with_celo = 0
+                    
+                    # Show Celo integration status with repository count if multiple repositories
+                    if "github_urls" in result and len(result["github_urls"]) > 1:
+                        celo_status = f"{'✅' if celo_integrated else '❌'} ({repos_with_celo}/{len(result['github_urls'])})"
+                    else:
+                        celo_status = "✅" if celo_integrated else "❌"
                 else:
                     celo_status = "❌"
 
                 f.write(
-                    f"| {project_name} | {score:.2f} | {celo_status} | [{github_url}]({github_url}) |\n"
+                    f"| {project_name} | {score_display} | {celo_status} | {github_url_display} |\n"
                 )
         
         # Initialize progress bar for individual reports with custom colors and format
@@ -407,25 +498,83 @@ def generate_report(results: List[Dict[str, Any]], output_dir: str = "reports") 
                 f.write("## Project Overview\n\n")
                 f.write(f"**Project Name:** {result['project_name']}\n\n")
                 f.write(f"**Project Description:** {result['project_description']}\n\n")
+                
                 # Handle None/NaN project_url
                 project_url = result['project_url']
                 if project_url is None or isinstance(project_url, float) and pd.isna(project_url):
                     f.write(f"**Project URL:** Not available\n\n")
                 else:
                     f.write(f"**Project URL:** [{project_url}]({project_url})\n\n")
-                f.write(
-                    f"**GitHub URL:** [{result['project_github_url']}]({result['project_github_url']})\n\n"
-                )
+                
+                # Add GitHub profiles of project owners/developers
+                if "project_owner_github_url" in result and result["project_owner_github_url"]:
+                    owner_urls = result["project_owner_github_url"]
+                    if len(owner_urls) == 1:
+                        f.write(f"**Project Developer:** [{owner_urls[0]}]({owner_urls[0]})\n\n")
+                    elif len(owner_urls) > 1:
+                        f.write(f"**Project Developers:**\n\n")
+                        for i, url in enumerate(owner_urls):
+                            f.write(f"{i+1}. [{url}]({url})\n")
+                        f.write("\n")
+                
+                # Handle multiple GitHub URLs
+                if "github_urls" in result and result["github_urls"]:
+                    # List all GitHub URLs
+                    github_urls = result["github_urls"]
+                    if len(github_urls) == 1:
+                        f.write(f"**GitHub URL:** [{github_urls[0]}]({github_urls[0]})\n\n")
+                    else:
+                        f.write(f"**GitHub URLs:** ({len(github_urls)} repositories)\n\n")
+                        for i, url in enumerate(github_urls):
+                            f.write(f"{i+1}. [{url}]({url})\n")
+                        f.write("\n")
+                else:
+                    # Fallback to original format
+                    f.write(f"**GitHub URL:** [{result['project_github_url']}]({result['project_github_url']})\n\n")
 
-                # Repository details
+                # Repository details - handle multiple repositories
                 if "analysis" in result and "repo_details" in result["analysis"]:
-                    repo = result["analysis"]["repo_details"]
-                    f.write("### Repository Statistics\n\n")
-                    f.write(f"- **Stars:** {repo.get('stars', 'N/A')}\n")
-                    f.write(f"- **Forks:** {repo.get('forks', 'N/A')}\n")
-                    f.write(f"- **Open Issues:** {repo.get('open_issues', 'N/A')}\n")
-                    f.write(f"- **Primary Language:** {repo.get('language', 'N/A')}\n")
-                    f.write(f"- **Last Updated:** {repo.get('last_update', 'N/A')}\n\n")
+                    repo_details = result["analysis"]["repo_details"]
+                    
+                    # Check if we have multiple repositories
+                    if isinstance(repo_details, list) and len(repo_details) > 0:
+                        f.write("### Repository Statistics\n\n")
+                        
+                        if len(repo_details) == 1:
+                            # Single repository - show simple stats
+                            repo = repo_details[0]
+                            f.write(f"- **Repository:** {repo.get('name', 'N/A')}\n")
+                            f.write(f"- **Stars:** {repo.get('stars', 'N/A')}\n")
+                            f.write(f"- **Forks:** {repo.get('forks', 'N/A')}\n")
+                            f.write(f"- **Open Issues:** {repo.get('open_issues', 'N/A')}\n")
+                            f.write(f"- **Primary Language:** {repo.get('language', 'N/A')}\n")
+                            f.write(f"- **Last Updated:** {repo.get('last_update', 'N/A')}\n\n")
+                        else:
+                            # Multiple repositories - create a summary table
+                            f.write("| Repository | Stars | Forks | Issues | Language | Last Updated |\n")
+                            f.write("|------------|-------|-------|--------|----------|-------------|\n")
+                            
+                            for repo in repo_details:
+                                repo_name = repo.get('name', 'N/A')
+                                stars = repo.get('stars', 0)
+                                forks = repo.get('forks', 0)
+                                issues = repo.get('open_issues', 0)
+                                language = repo.get('language', 'N/A')
+                                last_update = repo.get('last_update', 'N/A')
+                                if last_update and len(last_update) > 10:
+                                    # Simplify date format for table
+                                    last_update = last_update.split('T')[0]
+                                
+                                f.write(f"| {repo_name} | {stars} | {forks} | {issues} | {language} | {last_update} |\n")
+                            f.write("\n")
+                    elif isinstance(repo_details, dict):
+                        # Single repository in old format
+                        f.write("### Repository Statistics\n\n")
+                        f.write(f"- **Stars:** {repo_details.get('stars', 'N/A')}\n")
+                        f.write(f"- **Forks:** {repo_details.get('forks', 'N/A')}\n")
+                        f.write(f"- **Open Issues:** {repo_details.get('open_issues', 'N/A')}\n")
+                        f.write(f"- **Primary Language:** {repo_details.get('language', 'N/A')}\n")
+                        f.write(f"- **Last Updated:** {repo_details.get('last_update', 'N/A')}\n\n")
 
                 # Code Quality
                 f.write("## Code Quality Assessment\n\n")
@@ -440,10 +589,16 @@ def generate_report(results: List[Dict[str, Any]], output_dir: str = "reports") 
                         if "error" in quality:
                             f.write(f"**Error:** {quality['error']}\n\n")
                         else:
+                            # Check if we have multiple repository info
+                            repos_analyzed = quality.get("repositories_analyzed", 0)
+                            
                             # Safely get values with proper type checking
                             overall_score = quality.get("overall_score", 0)
                             if isinstance(overall_score, (int, float)):
-                                f.write(f"**Overall Score:** {overall_score:.2f}/100\n\n")
+                                if repos_analyzed > 1:
+                                    f.write(f"**Overall Score:** {overall_score:.2f}/100 (average of {repos_analyzed} repositories)\n\n")
+                                else:
+                                    f.write(f"**Overall Score:** {overall_score:.2f}/100\n\n")
                             else:
                                 f.write(f"**Overall Score:** 0.00/100\n\n")
                             
@@ -551,9 +706,23 @@ def generate_report(results: List[Dict[str, Any]], output_dir: str = "reports") 
                             # Get integration status safely
                             if "integrated" in celo:
                                 integrated = celo["integrated"]
+                                # Check if we have multiple repository data
+                                repos_with_celo = celo.get("repositories_with_celo", 0)
+                                repos_analyzed = 1  # Default for backward compatibility
+                                
+                                # Check if we can determine total repositories analyzed
+                                if "github_urls" in result and result["github_urls"]:
+                                    repos_analyzed = len(result["github_urls"])
                             else:
                                 integrated = False
-                            integration_status = "Yes" if integrated else "No"
+                                repos_with_celo = 0
+                                repos_analyzed = 1
+                                
+                            # Format integration status with repository counts if multiple repos
+                            if repos_analyzed > 1:
+                                integration_status = f"{'Yes' if integrated else 'No'} ({repos_with_celo}/{repos_analyzed} repositories)"
+                            else:
+                                integration_status = "Yes" if integrated else "No"
 
                             f.write(f"**Integrated with Celo:** {integration_status}\n\n")
 
@@ -561,9 +730,15 @@ def generate_report(results: List[Dict[str, Any]], output_dir: str = "reports") 
                                 f.write("### Evidence of Integration\n\n")
                                 for evidence in celo["evidence"]:
                                     if isinstance(evidence, dict) and "keyword" in evidence and "file" in evidence:
-                                        f.write(
-                                            f"- Found keyword '{evidence['keyword']}' in file: {evidence['file']}\n"
-                                        )
+                                        # Check if evidence includes repository information
+                                        if "repository" in evidence:
+                                            f.write(
+                                                f"- Found keyword '{evidence['keyword']}' in file: {evidence['file']} (Repository: {evidence['repository']})\n"
+                                            )
+                                        else:
+                                            f.write(
+                                                f"- Found keyword '{evidence['keyword']}' in file: {evidence['file']}\n"
+                                            )
                                 f.write("\n")
                             
                             # Add AI analysis of Celo integration if available
