@@ -2,6 +2,9 @@ pandas
 langchain
 langchain-community
 langchain-core
+langchain_anthropic
 openpyxl
 pygithub
 PyYAML
+python-dotenv
+langgraph

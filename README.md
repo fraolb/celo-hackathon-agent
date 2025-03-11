@@ -1,14 +1,15 @@
-# Celo Hackathon Project Analyzer
+# Celo Hackathon Project Analyzer with LangChain and Anthropic
 
-This tool analyzes GitHub repositories for Celo hackathon projects, evaluating code quality and checking for Celo blockchain integration.
+This tool analyzes GitHub repositories for Celo hackathon projects, evaluating code quality and checking for Celo blockchain integration using LangChain and Anthropic's Claude AI model.
 
 ## Features
 
 - Reads project data from an Excel file
-- Analyzes GitHub repositories using the GitHub API
-- Evaluates code quality based on multiple factors
-- Checks for Celo blockchain integration
-- Generates detailed Markdown reports
+- Analyzes GitHub repositories using LangChain's GitHub toolkit, which provides powerful access to repository information without requiring local cloning
+- Evaluates code quality using Anthropic's Claude AI model
+- Provides intelligent assessment of code quality and best practices
+- Checks for Celo blockchain integration with AI-powered analysis
+- Generates detailed Markdown reports with LLM-driven insights
 
 ## Installation
 
@@ -23,9 +24,14 @@ cd celo-hackathon-agent
 pip install -r requirements.txt
 ```
 
-3. Configure GitHub API token (optional but recommended to avoid rate limits):
+3. Configure API tokens:
    - Create a GitHub token with repo scope at https://github.com/settings/tokens
-   - Add the token to `config.json` in the `github_token` field
+   - Get an Anthropic API key from https://console.anthropic.com/
+   - Create a `.env` file based on `.env.example` and add your tokens:
+     ```
+     GITHUB_TOKEN=your_github_token_here
+     ANTHROPIC_API_KEY=your_anthropic_api_key_here
+     ```
 
 ## Usage
 
@@ -60,12 +66,24 @@ You can customize the analysis by editing `config.json`:
 - `celo_keywords`: Keywords to search for when checking Celo integration
 - `celo_files`: Files to check for Celo-related configurations
 
+The tool leverages LangChain's components:
+- `langchain_community.agent_toolkits.github.toolkit`: A powerful toolkit that interacts with GitHub repositories through PyGitHub
+- `langchain_github`: Used to access and analyze GitHub repositories
+- `langchain_anthropic`: Connects to Claude AI for intelligent code analysis
+- `langchain_core`: Provides chains and prompts for structured reasoning
+- `langgraph`: Creates reactive agents that can use GitHub tools effectively
+
 ## Output
 
 The tool generates the following reports:
 - `summary.md`: Overview of all analyzed projects
-- Individual project reports with detailed analysis
-- `results.json`: Raw data in JSON format
+- Individual project reports with detailed analysis, including:
+  - AI-powered code quality assessment with detailed reasoning
+  - Intelligent analysis of coding standards and best practices
+  - Suggestions for code improvements
+  - Comprehensive evaluation of Celo blockchain integration
+  - Evidence and analysis of how the project uses Celo technology
+- `results.json`: Raw data in JSON format for further processing
 
 ## License
 

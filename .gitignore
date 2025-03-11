@@ -1,2 +1,5 @@
 .venv
 sample_projects.xlsx
+.env
+reports/
+__pycache__/

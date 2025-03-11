@@ -2,9 +2,13 @@ import os
 import json
 import pandas as pd
 import argparse
-from github_analyzer import GitHubAnalyzer
+from github_analyzer import GitHubLangChainAnalyzer
 from pathlib import Path
 from typing import Dict, List, Any
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 def load_projects(excel_path: str) -> pd.DataFrame:
@@ -50,7 +54,7 @@ def analyze_projects(
     Returns:
         List of dictionaries containing analysis results
     """
-    analyzer = GitHubAnalyzer(config_path)
+    analyzer = GitHubLangChainAnalyzer(config_path)
     results = []
 
     for _, row in projects_df.iterrows():
@@ -108,15 +112,25 @@ def generate_report(results: List[Dict[str, Any]], output_dir: str = "reports") 
 
             # Get code quality score
             if "analysis" in result and "code_quality" in result["analysis"]:
-                score = result["analysis"]["code_quality"].get("overall_score", 0)
+                code_quality = result["analysis"]["code_quality"]
+                if isinstance(code_quality, dict) and "overall_score" in code_quality:
+                    score = code_quality["overall_score"]
+                elif isinstance(code_quality, (int, float)):
+                    score = code_quality
+                else:
+                    score = 0
             else:
                 score = 0
 
             # Get Celo integration status
             if "analysis" in result and "celo_integration" in result["analysis"]:
-                celo_integrated = result["analysis"]["celo_integration"].get(
-                    "integrated", False
-                )
+                celo_integration = result["analysis"]["celo_integration"]
+                if isinstance(celo_integration, dict) and "integrated" in celo_integration:
+                    celo_integrated = celo_integration["integrated"]
+                elif isinstance(celo_integration, bool):
+                    celo_integrated = celo_integration
+                else:
+                    celo_integrated = False
                 celo_status = "✅" if celo_integrated else "❌"
             else:
                 celo_status = "❌"
@@ -160,25 +174,73 @@ def generate_report(results: List[Dict[str, Any]], output_dir: str = "reports") 
             if "analysis" in result and "code_quality" in result["analysis"]:
                 quality = result["analysis"]["code_quality"]
 
-                if "error" in quality:
-                    f.write(f"**Error:** {quality['error']}\n\n")
+                if isinstance(quality, (int, float)):
+                    # If code_quality is just a number
+                    f.write(f"**Overall Score:** {quality:.2f}/100\n\n")
+                elif isinstance(quality, dict):
+                    if "error" in quality:
+                        f.write(f"**Error:** {quality['error']}\n\n")
+                    else:
+                        # Safely get values with proper type checking
+                        overall_score = quality.get("overall_score", 0)
+                        if isinstance(overall_score, (int, float)):
+                            f.write(f"**Overall Score:** {overall_score:.2f}/100\n\n")
+                        else:
+                            f.write(f"**Overall Score:** 0.00/100\n\n")
+                        
+                        readability = quality.get("readability", 0)
+                        if isinstance(readability, (int, float)):
+                            f.write(f"**Readability and Documentation:** {readability:.2f}/100\n\n")
+                        else:
+                            f.write(f"**Readability and Documentation:** 0.00/100\n\n")
+                        
+                        standards = quality.get("standards", 0)
+                        if isinstance(standards, (int, float)):
+                            f.write(f"**Coding Standards and Best Practices:** {standards:.2f}/100\n\n")
+                        else:
+                            f.write(f"**Coding Standards and Best Practices:** 0.00/100\n\n")
+                        
+                        complexity = quality.get("complexity", 0)
+                        if isinstance(complexity, (int, float)):
+                            f.write(f"**Algorithm Complexity and Efficiency:** {complexity:.2f}/100\n\n")
+                        else:
+                            f.write(f"**Algorithm Complexity and Efficiency:** 0.00/100\n\n")
+                        
+                        testing = quality.get("testing", 0)
+                        if isinstance(testing, (int, float)):
+                            f.write(f"**Testing and Coverage:** {testing:.2f}/100\n\n")
+                        else:
+                            f.write(f"**Testing and Coverage:** 0.00/100\n\n")
                 else:
-                    f.write(
-                        f"**Overall Score:** {quality.get('overall_score', 0):.2f}/100\n\n"
-                    )
-                    f.write(
-                        f"**Readability and Documentation:** {quality.get('readability', 0):.2f}/100\n\n"
-                    )
-                    f.write(
-                        f"**Coding Standards and Best Practices:** {quality.get('standards', 0):.2f}/100\n\n"
-                    )
-                    f.write(
-                        f"**Algorithm Complexity and Efficiency:** {quality.get('complexity', 0):.2f}/100\n\n"
-                    )
-                    f.write(
-                        f"**Testing and Coverage:** {quality.get('testing', 0):.2f}/100\n\n"
-                    )
+                    f.write(f"**Overall Score:** 0.00/100\n\n")
 
+                    # AI Analysis if available
+                    if "ai_analysis" in quality:
+                        f.write("### AI Analysis\n\n")
+                        ai_analysis = quality["ai_analysis"]
+                        
+                        if "overall_analysis" in ai_analysis:
+                            f.write(f"**Overall Analysis:** {ai_analysis['overall_analysis']}\n\n")
+                            
+                        if "suggestions" in ai_analysis and ai_analysis["suggestions"]:
+                            f.write("**Suggestions for Improvement:**\n\n")
+                            for suggestion in ai_analysis["suggestions"]:
+                                f.write(f"- {suggestion}\n")
+                            f.write("\n")
+                            
+                        if "readability_reasoning" in ai_analysis:
+                            f.write(f"**Readability Assessment:** {ai_analysis['readability_reasoning']}\n\n")
+                            
+                        if "standards_reasoning" in ai_analysis:
+                            f.write(f"**Standards Assessment:** {ai_analysis['standards_reasoning']}\n\n")
+                            
+                        if "complexity_reasoning" in ai_analysis:
+                            f.write(f"**Complexity Assessment:** {ai_analysis['complexity_reasoning']}\n\n")
+                            
+                        if "testing_reasoning" in ai_analysis:
+                            f.write(f"**Testing Assessment:** {ai_analysis['testing_reasoning']}\n\n")
+                    
+                    # Metrics
                     if "metrics" in quality:
                         f.write("### Metrics\n\n")
                         metrics = quality["metrics"]
@@ -191,12 +253,23 @@ def generate_report(results: List[Dict[str, Any]], output_dir: str = "reports") 
                         f.write(
                             f"- **Documentation Files:** {metrics.get('doc_file_count', 'N/A')}\n"
                         )
-                        f.write(
-                            f"- **Lines of Code:** {metrics.get('code_lines', 'N/A')}\n"
-                        )
-                        f.write(
-                            f"- **Comment Lines:** {metrics.get('comment_lines', 'N/A')}\n\n"
-                        )
+                        
+                        if "code_lines" in metrics:
+                            f.write(
+                                f"- **Lines of Code:** {metrics.get('code_lines', 'N/A')}\n"
+                            )
+                        
+                        if "comment_lines" in metrics:
+                            f.write(
+                                f"- **Comment Lines:** {metrics.get('comment_lines', 'N/A')}\n"
+                            )
+                            
+                        if "code_files_analyzed" in metrics:
+                            f.write(
+                                f"- **Code Files Analyzed:** {metrics.get('code_files_analyzed', 'N/A')}\n"
+                            )
+                        
+                        f.write("\n")
             else:
                 f.write(
                     "Could not assess code quality due to an error or inaccessible repository.\n\n"
@@ -208,20 +281,39 @@ def generate_report(results: List[Dict[str, Any]], output_dir: str = "reports") 
             if "analysis" in result and "celo_integration" in result["analysis"]:
                 celo = result["analysis"]["celo_integration"]
 
-                if "error" in celo:
-                    f.write(f"**Error:** {celo['error']}\n\n")
-                else:
-                    integrated = celo.get("integrated", False)
-                    integration_status = "Yes" if integrated else "No"
-
+                if isinstance(celo, bool):
+                    # If celo_integration is just a boolean
+                    integration_status = "Yes" if celo else "No"
                     f.write(f"**Integrated with Celo:** {integration_status}\n\n")
+                elif isinstance(celo, dict):
+                    if "error" in celo:
+                        f.write(f"**Error:** {celo['error']}\n\n")
+                    else:
+                        # Get integration status safely
+                        if "integrated" in celo:
+                            integrated = celo["integrated"]
+                        else:
+                            integrated = False
+                        integration_status = "Yes" if integrated else "No"
 
-                    if integrated and "evidence" in celo:
-                        f.write("### Evidence of Integration\n\n")
-                        for evidence in celo["evidence"]:
-                            f.write(
-                                f"- Found keyword '{evidence['keyword']}' in file: {evidence['file']}\n"
-                            )
+                        f.write(f"**Integrated with Celo:** {integration_status}\n\n")
+
+                        if integrated and "evidence" in celo and isinstance(celo["evidence"], list):
+                            f.write("### Evidence of Integration\n\n")
+                            for evidence in celo["evidence"]:
+                                if isinstance(evidence, dict) and "keyword" in evidence and "file" in evidence:
+                                    f.write(
+                                        f"- Found keyword '{evidence['keyword']}' in file: {evidence['file']}\n"
+                                    )
+                            f.write("\n")
+                        
+                        # Add AI analysis of Celo integration if available
+                        if integrated and "analysis" in celo:
+                            f.write("### Integration Analysis\n\n")
+                            f.write(f"{celo['analysis']}\n\n")
+                else:
+                    # Default case if celo_integration is something unexpected
+                    f.write(f"**Integrated with Celo:** No\n\n")
             else:
                 f.write(
                     "Could not assess Celo integration due to an error or inaccessible repository.\n\n"
