@@ -243,12 +243,29 @@ class GitHubLangChainAnalyzer:
                 callback(f"Fetching repository details for {repo_owner}/{repo_name}")
                 
                 # Run repository details fetch with active spinner
-                repo_details = run_with_active_spinner(
-                    func=self._get_repository_details_with_timeout,
-                    args=(repo_owner, repo_name),
-                    message=f"Fetching repository details for {repo_owner}/{repo_name}",
-                    callback=callback
-                )
+                try:
+                    repo_details = run_with_active_spinner(
+                        func=self._get_repository_details_with_timeout,
+                        args=(repo_owner, repo_name),
+                        message=f"Fetching repository details for {repo_owner}/{repo_name}",
+                        callback=callback
+                    )
+                except Exception as e:
+                    # Handle API or connection errors
+                    error_message = str(e)
+                    callback(f"Error fetching repository details: {error_message}")
+                    
+                    # Use fallback repository details
+                    repo_details = {
+                        "name": repo_name,
+                        "description": f"Repository for {repo_owner}/{repo_name}",
+                        "url": f"https://github.com/{repo_owner}/{repo_name}",
+                        "stars": 0,
+                        "forks": 0,
+                        "open_issues": 0,
+                        "last_update": "",
+                        "language": ""
+                    }
             else:
                 repo_details = self._get_repository_details_with_timeout(repo_owner, repo_name)
             if repo_details is None:
@@ -268,12 +285,36 @@ class GitHubLangChainAnalyzer:
                 callback(f"Analyzing code quality for {repo_owner}/{repo_name}")
                 
                 # Run code quality analysis with active spinner
-                code_quality = run_with_active_spinner(
-                    func=self._analyze_code_quality_with_timeout,
-                    args=(repo_owner, repo_name),
-                    message=f"Analyzing code quality for {repo_owner}/{repo_name}",
-                    callback=callback
-                )
+                try:
+                    code_quality = run_with_active_spinner(
+                        func=self._analyze_code_quality_with_timeout,
+                        args=(repo_owner, repo_name),
+                        message=f"Analyzing code quality for {repo_owner}/{repo_name}",
+                        callback=callback
+                    )
+                except Exception as e:
+                    # Handle API overload or other errors
+                    error_message = str(e)
+                    callback(f"API error during code quality analysis: {error_message}")
+                    
+                    # Use a simple fallback for code quality estimation
+                    # Use a standard score for all repos when API is unavailable
+                    base_score = 75  # Neutral default score for all repositories
+                    
+                    code_quality = {
+                        "overall_score": base_score,
+                        "readability": base_score,
+                        "standards": base_score,
+                        "complexity": base_score,
+                        "testing": base_score,
+                        "metrics": {
+                            "file_count": 0,
+                            "test_file_count": 0,
+                            "doc_file_count": 0
+                        },
+                        "api_error": error_message,
+                        "note": "Used fallback quality estimation due to API error: " + error_message
+                    }
             else:
                 code_quality = self._analyze_code_quality_with_timeout(repo_owner, repo_name)
             if code_quality is None:
@@ -296,18 +337,60 @@ class GitHubLangChainAnalyzer:
                 callback(f"Checking Celo integration for {repo_owner}/{repo_name}")
                 
                 # Run Celo integration check with active spinner
-                celo_integration = run_with_active_spinner(
-                    func=self._check_celo_integration_with_timeout,
-                    args=(repo_owner, repo_name),
-                    message=f"Checking Celo integration for {repo_owner}/{repo_name}",
-                    callback=callback
-                )
+                try:
+                    celo_integration = run_with_active_spinner(
+                        func=self._check_celo_integration_with_timeout,
+                        args=(repo_owner, repo_name),
+                        message=f"Checking Celo integration for {repo_owner}/{repo_name}",
+                        callback=callback
+                    )
+                except Exception as e:
+                    # Handle API overload or other errors
+                    error_message = str(e)
+                    callback(f"API error: {error_message}")
+                    
+                    # Look for evidence of Celo integration in repo name/description only
+                    # This is less likely to have false positives than checking repo owner
+                    has_celo_in_name = "celo" in repo_name.lower()
+                    
+                    # Only mark as integrated if we find strong evidence
+                    is_integrated = has_celo_in_name
+                    
+                    # Create appropriate evidence entry if we found Celo in name
+                    evidence = []
+                    if has_celo_in_name:
+                        evidence = [
+                            {
+                                "file": "Repository name",
+                                "keyword": "celo"
+                            }
+                        ]
+                    
+                    celo_integration = {
+                        "integrated": is_integrated,
+                        "evidence": evidence,
+                        "analysis": "Analysis used fallback method due to API error: " + error_message,
+                        "api_error": error_message
+                    }
             else:
                 celo_integration = self._check_celo_integration_with_timeout(repo_owner, repo_name)
             if celo_integration is None:
+                # If analysis timed out, use a neutral fallback based on name only
+                has_celo_in_name = "celo" in repo_name.lower()
+                
+                # Create appropriate evidence entry if we found Celo in name
+                evidence = []
+                if has_celo_in_name:
+                    evidence = [
+                        {
+                            "file": "Repository name",
+                            "keyword": "celo"
+                        }
+                    ]
+                    
                 celo_integration = {
-                    "integrated": repo_owner.lower() == "celo-org" or "celo" in repo_name.lower(),
-                    "evidence": [],
+                    "integrated": has_celo_in_name,
+                    "evidence": evidence,
                     "error": "Analysis timed out"
                 }
             

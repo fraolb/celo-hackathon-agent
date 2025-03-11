@@ -119,11 +119,16 @@ class Spinner:
         # Clear line completely first
         print("\r" + " " * 120, end="", flush=True)
         
-        check = f"{self.colors['green']}✓{self.colors['reset']}"
+        # Choose icon based on message content
+        if "Error" in final_message or "error" in final_message or "failed" in final_message:
+            icon = f"{self.colors['yellow']}⚠️{self.colors['reset']}"  # Warning for errors
+        else:
+            icon = f"{self.colors['green']}✓{self.colors['reset']}"  # Checkmark for success
+        
         message = f"{self.colors['bold']}{final_message}{self.colors['reset']}"
         elapsed_text = f"{self.colors['yellow']}(completed in {elapsed:.1f}s){self.colors['reset']}"
         
-        print(f"\r{check} {message} {elapsed_text}")
+        print(f"\r{icon} {message} {elapsed_text}")
         self.is_spinning = False
 
 
