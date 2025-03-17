@@ -171,6 +171,21 @@ def generate_project_report(result: Dict[str, Any], output_path: str):
                     f.write(f"- **Open Issues:** {repo.get('open_issues', 'N/A')}\n")
                     f.write(f"- **Primary Language:** {repo.get('language', 'N/A')}\n")
                     f.write(f"- **Last Updated:** {repo.get('last_update', 'N/A')}\n\n")
+                    
+                    # Display contributors for the single repository
+                    contributors = repo.get('contributors', [])
+                    if contributors:
+                        f.write("### Repository Contributors\n\n")
+                        f.write("| Username | Profile | Contributions |\n")
+                        f.write("|----------|---------|---------------|\n")
+                        
+                        for contributor in contributors:
+                            username = contributor.get('login', 'N/A')
+                            profile_url = contributor.get('profile_url', '#')
+                            contributions = contributor.get('contributions', 0)
+                            
+                            f.write(f"| {username} | [{profile_url}]({profile_url}) | {contributions} |\n")
+                        f.write("\n")
                 else:
                     # Multiple repositories - create a summary table
                     f.write("| Repository | Stars | Forks | Issues | Language | Last Updated |\n")
@@ -188,6 +203,29 @@ def generate_project_report(result: Dict[str, Any], output_path: str):
                             last_update = last_update.split('T')[0]
                         
                         f.write(f"| {repo_name} | {stars} | {forks} | {issues} | {language} | {last_update} |\n")
+                    f.write("\n")
+                    
+                    # Display contributors for each repository
+                    f.write("### Repository Contributors\n\n")
+                    for repo in repo_details:
+                        repo_name = repo.get('name', 'N/A')
+                        contributors = repo.get('contributors', [])
+                        
+                        if contributors:
+                            f.write(f"#### {repo_name} Contributors\n\n")
+                            f.write("| Username | Profile | Contributions |\n")
+                            f.write("|----------|---------|---------------|\n")
+                            
+                            for contributor in contributors:
+                                username = contributor.get('login', 'N/A')
+                                profile_url = contributor.get('profile_url', '#')
+                                contributions = contributor.get('contributions', 0)
+                                
+                                f.write(f"| {username} | [{profile_url}]({profile_url}) | {contributions} |\n")
+                            f.write("\n")
+                        else:
+                            f.write(f"#### {repo_name} Contributors\n\n")
+                            f.write("No contributor information available.\n\n")
                     f.write("\n")
             elif isinstance(repo_details, dict):
                 # Single repository in old format

@@ -129,7 +129,8 @@ class GitHubRepository:
             "forks": 0,
             "open_issues": 0,
             "last_update": "",
-            "language": ""
+            "language": "",
+            "contributors": []
         }
     
     @with_timeout(30)
@@ -158,7 +159,8 @@ class GitHubRepository:
                 "forks": self.repo.forks_count,
                 "open_issues": self.repo.open_issues_count,
                 "last_update": self.repo.updated_at.isoformat() if self.repo.updated_at else "",
-                "language": self.repo.language or ""
+                "language": self.repo.language or "",
+                "contributors": self.get_repository_contributors(limit=5)  # Get top 5 contributors
             }
             
             return repo_info
@@ -303,3 +305,31 @@ class GitHubRepository:
                 continue
                 
         return evidence
+        
+    @with_timeout(30)
+    def get_repository_contributors(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Get repository contributors using GitHub API.
+        
+        Args:
+            limit: Maximum number of contributors to return
+            
+        Returns:
+            List of contributor details
+        """
+        if self.repo is None:
+            return []
+            
+        try:
+            contributors = []
+            for contributor in self.repo.get_contributors()[:limit]:
+                contributors.append({
+                    "login": contributor.login,
+                    "profile_url": contributor.html_url,
+                    "contributions": contributor.contributions,
+                    "avatar_url": contributor.avatar_url if hasattr(contributor, "avatar_url") else None
+                })
+            return contributors
+        except Exception as e:
+            print(f"Error getting repository contributors: {str(e)}")
+            return []

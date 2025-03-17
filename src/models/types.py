@@ -5,6 +5,13 @@ Data type definitions for the Celo Hackathon Analyzer.
 from typing import Dict, List, Optional, TypedDict, Union
 
 
+class ContributorDetails(TypedDict):
+    """Contributor details type definition"""
+    login: str
+    profile_url: str
+    contributions: int
+    avatar_url: Optional[str]
+
 class RepoDetails(TypedDict):
     """Repository details type definition"""
     name: str
@@ -15,6 +22,7 @@ class RepoDetails(TypedDict):
     open_issues: int
     last_update: str
     language: str
+    contributors: Optional[List[ContributorDetails]]
 
 
 class CodeQualityScores(TypedDict):

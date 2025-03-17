@@ -61,19 +61,36 @@ def load_projects(excel_path: str) -> pd.DataFrame:
     try:
         logger.info(f"Loading project data from Excel file: {excel_path}")
         df = pd.read_excel(excel_path)
-        required_columns = [
-            "project_name",
-            "project_description",
-            "project_github_url",
-            "project_owner_github_url",
-            "project_url",
-        ]
+        
+        # Handle new format with "Name", "Github URL", "Description"
+        if all(col in df.columns for col in ["Name", "Github URL", "Description"]):
+            logger.info("Detected new Excel format, converting to internal format")
+            # Create a new DataFrame with the required column names
+            new_df = pd.DataFrame({
+                "project_name": df["Name"],
+                "project_description": df["Description"],
+                "project_github_url": df["Github URL"],
+                # Set empty values for missing columns
+                "project_owner_github_url": "",
+                "project_url": ""
+            })
+            df = new_df
+            
+        # Handle legacy format
+        else:
+            required_columns = [
+                "project_name",
+                "project_description",
+                "project_github_url",
+                "project_owner_github_url",
+                "project_url",
+            ]
 
-        # Check if required columns exist
-        for col in required_columns:
-            if col not in df.columns:
-                spinner.stop(f"Error: Missing column {col}")
-                raise ValueError(f"Missing required column: {col}")
+            # Check if required columns exist
+            for col in required_columns:
+                if col not in df.columns:
+                    spinner.stop(f"Error: Missing column {col}")
+                    raise ValueError(f"Missing required column: {col}")
 
         project_count = len(df)
         spinner.stop(f"Successfully loaded {project_count} projects from {excel_path}")
