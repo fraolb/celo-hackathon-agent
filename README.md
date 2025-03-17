@@ -54,8 +54,25 @@ python create_sample_data.py
 
 ### 🔍 Run the Analyzer
 
+#### Using the interactive CLI tool (recommended):
+```bash
+./devrel-agent.py
+```
+
+This will launch an interactive CLI that guides you through the process.
+
+#### Using the legacy script:
 ```bash
 python run.py --excel sample_projects.xlsx --output reports --verbose
+```
+
+#### Using the CLI tool in non-interactive mode:
+```bash
+# Analyze from Excel file
+./devrel-agent.py --non-interactive --excel sample_projects.xlsx --verbose
+
+# Analyze direct GitHub URLs
+./devrel-agent.py --non-interactive --urls "https://github.com/user/repo1,https://github.com/user/repo2" --project-name "My Project" --verbose
 ```
 
 #### Optional Arguments:
@@ -80,7 +97,8 @@ celo-hackathon-agent/
 │   ├── utils/          # Utility functions
 │   ├── reporting/      # Report generation
 │   └── main.py         # Main application logic
-├── run.py              # Entry point script
+├── run.py              # Legacy entry point script
+├── devrel-agent.py     # Interactive CLI tool
 ├── config.json         # Configuration
 └── requirements.txt    # Dependencies
 ```
