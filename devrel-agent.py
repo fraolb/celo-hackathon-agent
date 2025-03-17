@@ -42,6 +42,32 @@ def display_banner():
     """
     print(banner)
 
+def extract_repo_name_from_url(github_url: str) -> str:
+    """
+    Extract repository name from GitHub URL.
+    
+    Args:
+        github_url: GitHub repository URL
+        
+    Returns:
+        Repository name
+    """
+    # Handle empty URL
+    if not github_url:
+        return "Unknown Repository"
+        
+    # Remove trailing slashes and .git extension
+    github_url = github_url.rstrip('/')
+    if github_url.endswith('.git'):
+        github_url = github_url[:-4]
+    
+    # Split the URL and get the last part as the repo name
+    parts = github_url.split('/')
+    if len(parts) >= 1:
+        return parts[-1]
+    else:
+        return "Unknown Repository"
+
 def get_user_input() -> Dict[str, Any]:
     """
     Get user input through interactive prompts.
@@ -74,21 +100,36 @@ def get_user_input() -> Dict[str, Any]:
         input_data['source'] = 'excel'
         input_data['excel_path'] = excel_answer['excel_path']
     else:
-        url_questions = [
+        # First get GitHub URLs
+        github_url_question = [
             inquirer.Text('github_urls',
                          message="Enter GitHub URLs (comma-separated):"),
+        ]
+        github_url_answer = inquirer.prompt(github_url_question)
+        github_urls = github_url_answer['github_urls']
+        
+        # Extract repo name from the first URL for default project name
+        default_project_name = "Direct GitHub Analysis"
+        if github_urls:
+            first_url = github_urls.split(',')[0].strip()
+            if first_url:
+                default_project_name = extract_repo_name_from_url(first_url)
+        
+        # Now ask for project name and description
+        project_info_questions = [
             inquirer.Text('project_name',
                          message="Enter project name:",
-                         default="Direct GitHub Analysis"),
+                         default=default_project_name),
             inquirer.Text('project_description',
                          message="Enter project description (optional):",
                          default=""),
         ]
-        url_answer = inquirer.prompt(url_questions)
+        project_info_answer = inquirer.prompt(project_info_questions)
+        
         input_data['source'] = 'direct'
-        input_data['github_urls'] = url_answer['github_urls']
-        input_data['project_name'] = url_answer['project_name']
-        input_data['project_description'] = url_answer['project_description']
+        input_data['github_urls'] = github_urls
+        input_data['project_name'] = project_info_answer['project_name']
+        input_data['project_description'] = project_info_answer['project_description']
     
     # Common questions
     common_questions = [
@@ -219,8 +260,8 @@ def main():
                         help='Run in non-interactive mode with command-line args')
     parser.add_argument('--excel', help='Path to Excel file with GitHub URLs')
     parser.add_argument('--urls', help='Comma-separated GitHub URLs for direct analysis')
-    parser.add_argument('--project-name', default='GitHub Analysis', 
-                        help='Project name for direct URL analysis')
+    parser.add_argument('--project-name', 
+                        help='Project name for direct URL analysis (defaults to repo name)')
     parser.add_argument('--project-desc', default='', 
                         help='Project description for direct URL analysis')
     parser.add_argument('--output', default='reports', help='Output directory for reports')
@@ -246,7 +287,15 @@ def main():
         elif args.urls:
             user_input['source'] = 'direct'
             user_input['github_urls'] = args.urls
-            user_input['project_name'] = args.project_name
+            
+            # Determine project name - use provided name or extract from URL
+            if args.project_name:
+                user_input['project_name'] = args.project_name
+            else:
+                # Extract from the first URL
+                first_url = args.urls.split(',')[0].strip()
+                user_input['project_name'] = extract_repo_name_from_url(first_url)
+                
             user_input['project_description'] = args.project_desc
         else:
             print("Error: In non-interactive mode, you must provide either --excel or --urls")

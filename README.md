@@ -71,7 +71,10 @@ python run.py --excel sample_projects.xlsx --output reports --verbose
 # Analyze from Excel file
 ./devrel-agent.py --non-interactive --excel sample_projects.xlsx --verbose
 
-# Analyze direct GitHub URLs
+# Analyze direct GitHub URLs (project name will be automatically extracted from repository name)
+./devrel-agent.py --non-interactive --urls "https://github.com/user/repo1,https://github.com/user/repo2" --verbose
+
+# Analyze direct GitHub URLs with custom project name
 ./devrel-agent.py --non-interactive --urls "https://github.com/user/repo1,https://github.com/user/repo2" --project-name "My Project" --verbose
 ```
 
