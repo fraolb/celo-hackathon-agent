@@ -54,7 +54,31 @@ python create_sample_data.py
 
 ### 🔍 Run the Analyzer
 
-#### Using the interactive CLI tool (recommended):
+#### Using the Makefile (recommended):
+```bash
+# Display available commands
+make help
+
+# Install dependencies
+make setup
+
+# Run in interactive mode
+make run
+
+# Analyze projects from an Excel file
+make run-excel FILE=sample_projects.xlsx VERBOSE=1
+
+# Analyze a GitHub repository directly
+make run-url URL="https://github.com/user/repo"
+
+# Analyze with custom project name
+make run-url URL="https://github.com/user/repo" NAME="My Project" VERBOSE=1
+
+# Clean up generated files
+make clean
+```
+
+#### Using the interactive CLI tool:
 ```bash
 ./devrel-agent.py
 ```
@@ -102,6 +126,7 @@ celo-hackathon-agent/
 │   └── main.py         # Main application logic
 ├── run.py              # Legacy entry point script
 ├── devrel-agent.py     # Interactive CLI tool
+├── Makefile            # Simplified command interface
 ├── config.json         # Configuration
 └── requirements.txt    # Dependencies
 ```
