@@ -12,6 +12,14 @@ class ContributorDetails(TypedDict):
     contributions: int
     avatar_url: Optional[str]
 
+class CommitStats(TypedDict):
+    """Repository commit statistics"""
+    total_commits: int
+    first_commit_date: str
+    latest_commit_date: str
+    commit_frequency: float  # average commits per week
+    commit_history: Optional[Dict[str, int]]  # monthly commit counts
+
 class RepoDetails(TypedDict):
     """Repository details type definition"""
     name: str
@@ -23,6 +31,12 @@ class RepoDetails(TypedDict):
     last_update: str
     language: str
     contributors: Optional[List[ContributorDetails]]
+    total_contributors: Optional[int]
+    commit_stats: Optional[CommitStats]
+    main_languages: Optional[Dict[str, float]]  # language percentages
+    license_type: Optional[str]
+    created_at: Optional[str]  # repository creation date
+    size_kb: Optional[int]  # repository size in KB
 
 
 class CodeQualityScores(TypedDict):

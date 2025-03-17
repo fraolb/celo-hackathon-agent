@@ -130,7 +130,19 @@ class GitHubRepository:
             "open_issues": 0,
             "last_update": "",
             "language": "",
-            "contributors": []
+            "contributors": [],
+            "total_contributors": 0,
+            "commit_stats": {
+                "total_commits": 0,
+                "first_commit_date": "",
+                "latest_commit_date": "",
+                "commit_frequency": 0.0,
+                "commit_history": {}
+            },
+            "main_languages": {},
+            "license_type": None,
+            "created_at": "",
+            "size_kb": 0
         }
     
     @with_timeout(30)
@@ -150,6 +162,15 @@ class GitHubRepository:
             )
         
         try:
+            # Get contributors list (limited to top 5 for display)
+            contributors = self.get_repository_contributors(limit=5)
+            
+            # Get commit statistics
+            commit_stats = self.get_repository_commit_stats()
+            
+            # Get main languages
+            languages = self.get_repository_languages()
+            
             # Get repository details directly
             repo_info = {
                 "name": self.repo.name,
@@ -160,7 +181,13 @@ class GitHubRepository:
                 "open_issues": self.repo.open_issues_count,
                 "last_update": self.repo.updated_at.isoformat() if self.repo.updated_at else "",
                 "language": self.repo.language or "",
-                "contributors": self.get_repository_contributors(limit=5)  # Get top 5 contributors
+                "contributors": contributors,
+                "total_contributors": len(contributors),
+                "commit_stats": commit_stats,
+                "main_languages": languages,
+                "license_type": self.repo.license.name if self.repo.license else None,
+                "created_at": self.repo.created_at.isoformat() if self.repo.created_at else "",
+                "size_kb": self.repo.size
             }
             
             return repo_info
@@ -333,3 +360,138 @@ class GitHubRepository:
         except Exception as e:
             print(f"Error getting repository contributors: {str(e)}")
             return []
+            
+    @with_timeout(45)  # This can take longer so we give it more time
+    def get_repository_commit_stats(self) -> Dict[str, Any]:
+        """
+        Get repository commit statistics.
+        
+        Returns:
+            Dictionary with commit stats
+        """
+        if self.repo is None:
+            return {
+                "total_commits": 0,
+                "first_commit_date": "",
+                "latest_commit_date": "",
+                "commit_frequency": 0.0,
+                "commit_history": {}
+            }
+            
+        try:
+            import datetime
+            from collections import defaultdict
+            
+            # Get commit count (limitation: only counts recent commits)
+            commit_count = 0
+            first_commit = None
+            latest_commit = None
+            commit_dates = []
+            monthly_commits = defaultdict(int)
+            
+            # Sample commits with a maximum to avoid timeouts
+            max_commits_to_process = 300
+            
+            # Get commits (sorted newest to oldest)
+            commits = self.repo.get_commits()
+            
+            for i, commit in enumerate(commits):
+                if i >= max_commits_to_process:
+                    break
+                
+                if commit.commit.author and commit.commit.author.date:
+                    commit_date = commit.commit.author.date
+                    commit_dates.append(commit_date)
+                    
+                    # Track the first and latest commits
+                    if latest_commit is None or commit_date > latest_commit:
+                        latest_commit = commit_date
+                    if first_commit is None or commit_date < first_commit:
+                        first_commit = commit_date
+                    
+                    # Group by year-month for history
+                    month_key = f"{commit_date.year}-{commit_date.month:02d}"
+                    monthly_commits[month_key] += 1
+                
+                commit_count += 1
+            
+            # Calculate commit frequency (commits per week)
+            commit_frequency = 0.0
+            if first_commit and latest_commit and first_commit != latest_commit:
+                # Calculate weeks between first and latest commit
+                weeks_diff = (latest_commit - first_commit).days / 7.0
+                if weeks_diff > 0:
+                    commit_frequency = commit_count / weeks_diff
+            
+            # Sort monthly commits by date
+            sorted_monthly_commits = dict(sorted(
+                monthly_commits.items(), 
+                key=lambda x: (int(x[0].split('-')[0]), int(x[0].split('-')[1]))
+            ))
+            
+            # Limit to last 12 months if there are many
+            if len(sorted_monthly_commits) > 12:
+                last_12_months = list(sorted_monthly_commits.items())[-12:]
+                sorted_monthly_commits = dict(last_12_months)
+            
+            return {
+                "total_commits": commit_count,
+                "first_commit_date": first_commit.isoformat() if first_commit else "",
+                "latest_commit_date": latest_commit.isoformat() if latest_commit else "",
+                "commit_frequency": round(commit_frequency, 2),
+                "commit_history": sorted_monthly_commits
+            }
+            
+        except Exception as e:
+            print(f"Error getting repository commit stats: {str(e)}")
+            return {
+                "total_commits": 0,
+                "first_commit_date": "",
+                "latest_commit_date": "",
+                "commit_frequency": 0.0,
+                "commit_history": {}
+            }
+            
+    @with_timeout(20)
+    def get_repository_languages(self) -> Dict[str, float]:
+        """
+        Get repository language breakdown.
+        
+        Returns:
+            Dictionary with language percentages
+        """
+        if self.repo is None:
+            return {}
+            
+        try:
+            # Get languages dict from GitHub API (bytes per language)
+            languages_bytes = self.repo.get_languages()
+            
+            if not languages_bytes:
+                return {}
+                
+            # Calculate total bytes
+            total_bytes = sum(languages_bytes.values())
+            
+            if total_bytes == 0:
+                return {}
+                
+            # Convert to percentages
+            languages_percent = {
+                lang: round((bytes_count / total_bytes) * 100, 1)
+                for lang, bytes_count in languages_bytes.items()
+            }
+            
+            # Sort by percentage (descending)
+            sorted_languages = dict(sorted(
+                languages_percent.items(), 
+                key=lambda x: x[1], 
+                reverse=True
+            ))
+            
+            # Limit to top 5 languages
+            return dict(list(sorted_languages.items())[:5])
+            
+        except Exception as e:
+            print(f"Error getting repository languages: {str(e)}")
+            return {}

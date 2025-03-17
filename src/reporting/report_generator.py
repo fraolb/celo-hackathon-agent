@@ -8,11 +8,102 @@ import logging
 import pandas as pd
 from typing import Dict, List, Any
 from tqdm import tqdm
+from datetime import datetime
 
 from src.utils.spinner import Spinner
 
 # Configure logger
 logger = logging.getLogger(__name__)
+
+def format_date(date_string: str) -> str:
+    """Format ISO date string to a more readable format."""
+    if not date_string or date_string == 'N/A':
+        return 'N/A'
+    try:
+        date_obj = datetime.fromisoformat(date_string.replace('Z', '+00:00'))
+        return date_obj.strftime('%Y-%m-%d')
+    except Exception:
+        return date_string
+    
+def format_size(size_kb: int) -> str:
+    """Format size in KB to a more readable format."""
+    if size_kb < 1024:
+        return f"{size_kb} KB"
+    elif size_kb < 1024 * 1024:
+        return f"{size_kb / 1024:.1f} MB"
+    else:
+        return f"{size_kb / (1024 * 1024):.2f} GB"
+    
+def calculate_project_totals(repo_details: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Calculate combined metrics for all repositories in a project."""
+    totals = {
+        "stars": 0,
+        "forks": 0,
+        "open_issues": 0,
+        "contributors": 0,
+        "commits": 0,
+        "languages": {},
+        "first_commit": None,
+        "latest_commit": None,
+        "commit_frequency": 0
+    }
+    
+    repo_count = len(repo_details)
+    if repo_count == 0:
+        return totals
+    
+    for repo in repo_details:
+        # Sum up numeric metrics
+        totals["stars"] += repo.get("stars", 0)
+        totals["forks"] += repo.get("forks", 0)
+        totals["open_issues"] += repo.get("open_issues", 0)
+        totals["contributors"] += repo.get("total_contributors", 0)
+        
+        # Combine commit stats
+        commit_stats = repo.get("commit_stats", {})
+        totals["commits"] += commit_stats.get("total_commits", 0)
+        
+        # Track first and latest commits across all repos
+        first_commit = commit_stats.get("first_commit_date", "")
+        latest_commit = commit_stats.get("latest_commit_date", "")
+        
+        if first_commit:
+            if not totals["first_commit"] or first_commit < totals["first_commit"]:
+                totals["first_commit"] = first_commit
+        
+        if latest_commit:
+            if not totals["latest_commit"] or latest_commit > totals["latest_commit"]:
+                totals["latest_commit"] = latest_commit
+        
+        # Combine language stats
+        for lang, percentage in repo.get("main_languages", {}).items():
+            if lang in totals["languages"]:
+                totals["languages"][lang] += percentage / repo_count
+            else:
+                totals["languages"][lang] = percentage / repo_count
+    
+    # Sort languages
+    totals["languages"] = dict(sorted(
+        totals["languages"].items(),
+        key=lambda x: x[1],
+        reverse=True
+    ))
+    
+    # Limit to top 5 languages
+    totals["languages"] = dict(list(totals["languages"].items())[:5])
+    
+    # Round language percentages
+    totals["languages"] = {
+        lang: round(pct, 1) for lang, pct in totals["languages"].items()
+    }
+    
+    # Calculate overall commit frequency
+    totals["commit_frequency"] = sum(
+        repo.get("commit_stats", {}).get("commit_frequency", 0) 
+        for repo in repo_details
+    ) / repo_count
+    
+    return totals
 
 
 def clean_urls(urls: List[str]) -> List[str]:
@@ -47,8 +138,10 @@ def generate_summary_report(results: List[Dict[str, Any]], output_path: str):
     """
     with open(output_path, "w") as f:
         f.write("# Celo Hackathon Project Analysis Summary\n\n")
-        f.write("| Project | Score | Celo Integration | GitHub URL |\n")
-        f.write("|---------|-------|------------------|------------|\n")
+        
+        # Create an enhanced summary table with more metrics
+        f.write("| Project | Score | Celo Integration | Stars | Forks | Contributors | Commits | Repos | GitHub URL |\n")
+        f.write("|---------|-------|------------------|-------|-------|--------------|---------|-------|------------|\n")
 
         for result in results:
             project_name = result["project_name"]
@@ -57,14 +150,16 @@ def generate_summary_report(results: List[Dict[str, Any]], output_path: str):
             if "github_urls" in result and result["github_urls"]:
                 # For multiple URLs, show the first one with a link and note the count
                 github_urls = result["github_urls"]
+                repo_count = len(github_urls)
                 if len(github_urls) > 1:
-                    github_url_display = f"[{github_urls[0]}]({github_urls[0]}) +{len(github_urls)-1} more"
+                    github_url_display = f"[Link]({github_urls[0]}) +{len(github_urls)-1}"
                 else:
-                    github_url_display = f"[{github_urls[0]}]({github_urls[0]})"
+                    github_url_display = f"[Link]({github_urls[0]})"
             else:
                 # Fallback to the original field if github_urls isn't available
                 github_url = result["project_github_url"]
-                github_url_display = f"[{github_url}]({github_url})"
+                github_url_display = f"[Link]({github_url})"
+                repo_count = 1
 
             # Get code quality score
             score_display = "0.00"
@@ -73,8 +168,8 @@ def generate_summary_report(results: List[Dict[str, Any]], output_path: str):
                 if isinstance(code_quality, dict) and "overall_score" in code_quality:
                     score = code_quality["overall_score"]
                     repos_analyzed = code_quality.get("repositories_analyzed", 1)
-                    # Add repository count if multiple repositories
-                    score_display = f"{score:.2f}" if repos_analyzed <= 1 else f"{score:.2f} ({repos_analyzed} repos)"
+                    # Simplified score display
+                    score_display = f"{score:.2f}"
                 elif isinstance(code_quality, (int, float)):
                     score = code_quality
                     score_display = f"{score:.2f}"
@@ -98,10 +193,48 @@ def generate_summary_report(results: List[Dict[str, Any]], output_path: str):
                     celo_status = f"{'✅' if celo_integrated else '❌'} ({repos_with_celo}/{len(result['github_urls'])})"
                 else:
                     celo_status = "✅" if celo_integrated else "❌"
+            
+            # Get repository metrics
+            stars = 0
+            forks = 0
+            contributors = 0
+            commits = 0
+            
+            if "analysis" in result and "repo_details" in result["analysis"]:
+                repo_details = result["analysis"]["repo_details"]
+                if isinstance(repo_details, list):
+                    # Calculate totals across all repositories
+                    for repo in repo_details:
+                        stars += repo.get("stars", 0)
+                        forks += repo.get("forks", 0)
+                        contributors += repo.get("total_contributors", 0)
+                        commits += repo.get("commit_stats", {}).get("total_commits", 0)
+                elif isinstance(repo_details, dict):
+                    # Single repository
+                    stars = repo_details.get("stars", 0)
+                    forks = repo_details.get("forks", 0)
+                    contributors = repo_details.get("total_contributors", 0)
+                    commits = repo_details.get("commit_stats", {}).get("total_commits", 0)
 
             f.write(
-                f"| {project_name} | {score_display} | {celo_status} | {github_url_display} |\n"
+                f"| {project_name} | {score_display} | {celo_status} | {stars} | {forks} | {contributors} | {commits} | {repo_count} | {github_url_display} |\n"
             )
+            
+        # Add a summary footer
+        f.write("\n## Overview\n\n")
+        f.write("This report provides a comprehensive analysis of all projects submitted to the Celo Hackathon. ")
+        f.write("Each project has been evaluated for code quality, Celo blockchain integration, and various repository metrics.\n\n")
+        
+        f.write("### Metrics Explanation:\n\n")
+        f.write("- **Score**: Overall code quality score (0-100)\n")
+        f.write("- **Celo Integration**: Whether the project integrates with Celo blockchain\n")
+        f.write("- **Stars**: Total GitHub stars across all repositories\n")
+        f.write("- **Forks**: Total number of forks across all repositories\n")
+        f.write("- **Contributors**: Total unique contributors\n")
+        f.write("- **Commits**: Total number of commits\n")
+        f.write("- **Repos**: Number of GitHub repositories\n\n")
+        
+        f.write("For detailed information on each project, please refer to the individual project reports.")
 
 
 def generate_project_report(result: Dict[str, Any], output_path: str):
@@ -165,14 +298,55 @@ def generate_project_report(result: Dict[str, Any], output_path: str):
                 if len(repo_details) == 1:
                     # Single repository - show simple stats
                     repo = repo_details[0]
+                    # Basic repository info
                     f.write(f"- **Repository:** {repo.get('name', 'N/A')}\n")
-                    f.write(f"- **Stars:** {repo.get('stars', 'N/A')}\n")
-                    f.write(f"- **Forks:** {repo.get('forks', 'N/A')}\n")
-                    f.write(f"- **Open Issues:** {repo.get('open_issues', 'N/A')}\n")
-                    f.write(f"- **Primary Language:** {repo.get('language', 'N/A')}\n")
-                    f.write(f"- **Last Updated:** {repo.get('last_update', 'N/A')}\n\n")
+                    f.write(f"- **Created:** {format_date(repo.get('created_at', 'N/A'))}\n")
+                    f.write(f"- **Last Updated:** {format_date(repo.get('last_update', 'N/A'))}\n")
+                    f.write(f"- **License:** {repo.get('license_type', 'None')}\n")
+                    f.write(f"- **Size:** {format_size(repo.get('size_kb', 0))}\n\n")
                     
-                    # Display contributors for the single repository
+                    # Repository metrics
+                    f.write("### Repository Metrics\n\n")
+                    f.write(f"- **Stars:** {repo.get('stars', 0)}\n")
+                    f.write(f"- **Forks:** {repo.get('forks', 0)}\n")
+                    f.write(f"- **Open Issues:** {repo.get('open_issues', 0)}\n")
+                    f.write(f"- **Total Contributors:** {repo.get('total_contributors', 0)}\n")
+                    
+                    # Commit Statistics
+                    commit_stats = repo.get('commit_stats', {})
+                    if commit_stats:
+                        f.write(f"- **Total Commits:** {commit_stats.get('total_commits', 0)}\n")
+                        f.write(f"- **First Commit:** {format_date(commit_stats.get('first_commit_date', ''))}\n")
+                        f.write(f"- **Latest Commit:** {format_date(commit_stats.get('latest_commit_date', ''))}\n")
+                        f.write(f"- **Average Commits per Week:** {commit_stats.get('commit_frequency', 0)}\n\n")
+                    
+                    # Language distribution
+                    languages = repo.get('main_languages', {})
+                    if languages:
+                        f.write("### Language Distribution\n\n")
+                        for lang, percentage in languages.items():
+                            f.write(f"- **{lang}:** {percentage}%\n")
+                        f.write("\n")
+                    else:
+                        f.write(f"- **Primary Language:** {repo.get('language', 'N/A')}\n\n")
+                    
+                    # Commit History Visualization (if available)
+                    commit_history = commit_stats.get('commit_history', {})
+                    if commit_history:
+                        f.write("### Commit Activity\n\n")
+                        f.write("```\n")
+                        
+                        # Create a basic ASCII chart of commit activity
+                        max_commits = max(commit_history.values()) if commit_history else 0
+                        if max_commits > 0:
+                            for month, count in commit_history.items():
+                                bar_length = int((count / max_commits) * 20)
+                                bar = '█' * bar_length
+                                f.write(f"{month}: {bar} {count}\n")
+                        
+                        f.write("```\n\n")
+                    
+                    # Repository Contributors
                     contributors = repo.get('contributors', [])
                     if contributors:
                         f.write("### Repository Contributors\n\n")
@@ -187,32 +361,97 @@ def generate_project_report(result: Dict[str, Any], output_path: str):
                             f.write(f"| {username} | [{profile_url}]({profile_url}) | {contributions} |\n")
                         f.write("\n")
                 else:
-                    # Multiple repositories - create a summary table
-                    f.write("| Repository | Stars | Forks | Issues | Language | Last Updated |\n")
-                    f.write("|------------|-------|-------|--------|----------|-------------|\n")
+                    # Calculate combined project metrics
+                    project_totals = calculate_project_totals(repo_details)
+                    
+                    # Project Summary
+                    f.write("### Project Summary\n\n")
+                    f.write(f"- **Total Repositories:** {len(repo_details)}\n")
+                    f.write(f"- **Total Stars:** {project_totals['stars']}\n")
+                    f.write(f"- **Total Forks:** {project_totals['forks']}\n")
+                    f.write(f"- **Total Contributors:** {project_totals['contributors']}\n")
+                    f.write(f"- **Total Commits:** {project_totals['commits']}\n")
+                    f.write(f"- **First Commit:** {format_date(project_totals['first_commit'])}\n")
+                    f.write(f"- **Latest Commit:** {format_date(project_totals['latest_commit'])}\n")
+                    f.write(f"- **Avg. Commit Frequency:** {round(project_totals['commit_frequency'], 2)} commits/week\n\n")
+                    
+                    # Language distribution
+                    languages = project_totals['languages']
+                    if languages:
+                        f.write("### Project Language Distribution\n\n")
+                        for lang, percentage in languages.items():
+                            f.write(f"- **{lang}:** {percentage}%\n")
+                        f.write("\n")
+                    
+                    # Multiple repositories - create a detailed summary table
+                    f.write("### Repositories\n\n")
+                    f.write("| Repository | Stars | Forks | Issues | Contributors | Commits | Created | Last Updated |\n")
+                    f.write("|------------|-------|-------|--------|--------------|---------|---------|-------------|\n")
                     
                     for repo in repo_details:
                         repo_name = repo.get('name', 'N/A')
                         stars = repo.get('stars', 0)
                         forks = repo.get('forks', 0)
                         issues = repo.get('open_issues', 0)
-                        language = repo.get('language', 'N/A')
-                        last_update = repo.get('last_update', 'N/A')
-                        if last_update and len(last_update) > 10:
-                            # Simplify date format for table
-                            last_update = last_update.split('T')[0]
+                        contributors = repo.get('total_contributors', 0)
+                        commits = repo.get('commit_stats', {}).get('total_commits', 0)
+                        created = format_date(repo.get('created_at', ''))
+                        last_update = format_date(repo.get('last_update', ''))
                         
-                        f.write(f"| {repo_name} | {stars} | {forks} | {issues} | {language} | {last_update} |\n")
+                        f.write(f"| {repo_name} | {stars} | {forks} | {issues} | {contributors} | {commits} | {created} | {last_update} |\n")
                     f.write("\n")
                     
-                    # Display contributors for each repository
-                    f.write("### Repository Contributors\n\n")
-                    for repo in repo_details:
+                    # Per-repository details
+                    for i, repo in enumerate(repo_details):
                         repo_name = repo.get('name', 'N/A')
-                        contributors = repo.get('contributors', [])
+                        f.write(f"### Repository {i+1}: {repo_name}\n\n")
                         
+                        # Basic repository info
+                        f.write(f"- **Created:** {format_date(repo.get('created_at', 'N/A'))}\n")
+                        f.write(f"- **Last Updated:** {format_date(repo.get('last_update', 'N/A'))}\n")
+                        f.write(f"- **License:** {repo.get('license_type', 'None')}\n")
+                        f.write(f"- **Size:** {format_size(repo.get('size_kb', 0))}\n")
+                        f.write(f"- **Stars:** {repo.get('stars', 0)}\n")
+                        f.write(f"- **Forks:** {repo.get('forks', 0)}\n")
+                        f.write(f"- **Open Issues:** {repo.get('open_issues', 0)}\n\n")
+                        
+                        # Language distribution
+                        languages = repo.get('main_languages', {})
+                        if languages:
+                            f.write("#### Language Distribution\n\n")
+                            for lang, percentage in languages.items():
+                                f.write(f"- **{lang}:** {percentage}%\n")
+                            f.write("\n")
+                        
+                        # Commit info
+                        commit_stats = repo.get('commit_stats', {})
+                        if commit_stats:
+                            f.write("#### Commit Statistics\n\n")
+                            f.write(f"- **Total Commits:** {commit_stats.get('total_commits', 0)}\n")
+                            f.write(f"- **First Commit:** {format_date(commit_stats.get('first_commit_date', ''))}\n")
+                            f.write(f"- **Latest Commit:** {format_date(commit_stats.get('latest_commit_date', ''))}\n")
+                            f.write(f"- **Avg. Commits/Week:** {commit_stats.get('commit_frequency', 0)}\n\n")
+                        
+                            # Commit history
+                            commit_history = commit_stats.get('commit_history', {})
+                            if commit_history:
+                                f.write("#### Commit Activity\n\n")
+                                f.write("```\n")
+                                
+                                # Create a basic ASCII chart of commit activity
+                                max_commits = max(commit_history.values()) if commit_history else 0
+                                if max_commits > 0:
+                                    for month, count in commit_history.items():
+                                        bar_length = int((count / max_commits) * 20)
+                                        bar = '█' * bar_length
+                                        f.write(f"{month}: {bar} {count}\n")
+                                
+                                f.write("```\n\n")
+                        
+                        # Contributors
+                        contributors = repo.get('contributors', [])
                         if contributors:
-                            f.write(f"#### {repo_name} Contributors\n\n")
+                            f.write("#### Contributors\n\n")
                             f.write("| Username | Profile | Contributions |\n")
                             f.write("|----------|---------|---------------|\n")
                             
@@ -224,17 +463,37 @@ def generate_project_report(result: Dict[str, Any], output_path: str):
                                 f.write(f"| {username} | [{profile_url}]({profile_url}) | {contributions} |\n")
                             f.write("\n")
                         else:
-                            f.write(f"#### {repo_name} Contributors\n\n")
+                            f.write("#### Contributors\n\n")
                             f.write("No contributor information available.\n\n")
+                    
                     f.write("\n")
             elif isinstance(repo_details, dict):
                 # Single repository in old format
                 f.write("### Repository Statistics\n\n")
-                f.write(f"- **Stars:** {repo_details.get('stars', 'N/A')}\n")
-                f.write(f"- **Forks:** {repo_details.get('forks', 'N/A')}\n")
-                f.write(f"- **Open Issues:** {repo_details.get('open_issues', 'N/A')}\n")
+                f.write(f"- **Repository:** {repo_details.get('name', 'N/A')}\n")
+                f.write(f"- **Stars:** {repo_details.get('stars', 0)}\n")
+                f.write(f"- **Forks:** {repo_details.get('forks', 0)}\n")
+                f.write(f"- **Open Issues:** {repo_details.get('open_issues', 0)}\n")
                 f.write(f"- **Primary Language:** {repo_details.get('language', 'N/A')}\n")
-                f.write(f"- **Last Updated:** {repo_details.get('last_update', 'N/A')}\n\n")
+                f.write(f"- **Last Updated:** {format_date(repo_details.get('last_update', 'N/A'))}\n")
+                
+                # Add contributor info if available
+                if 'contributors' in repo_details and repo_details['contributors']:
+                    f.write(f"- **Total Contributors:** {len(repo_details['contributors'])}\n\n")
+                    
+                    f.write("### Repository Contributors\n\n")
+                    f.write("| Username | Profile | Contributions |\n")
+                    f.write("|----------|---------|---------------|\n")
+                    
+                    for contributor in repo_details['contributors']:
+                        username = contributor.get('login', 'N/A')
+                        profile_url = contributor.get('profile_url', '#')
+                        contributions = contributor.get('contributions', 0)
+                        
+                        f.write(f"| {username} | [{profile_url}]({profile_url}) | {contributions} |\n")
+                    f.write("\n")
+                else:
+                    f.write("\n")
 
         # Code Quality
         f.write("## Code Quality Assessment\n\n")
