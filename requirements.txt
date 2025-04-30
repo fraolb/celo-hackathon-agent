@@ -3,9 +3,7 @@ uvicorn
 python-dotenv
 PyGithub
 polars
-langchain
-langchain-google-genai
+google.generativeai
 gitingest
-typer
-rich
-typer
+Colorama
+Click
