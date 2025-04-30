@@ -5,10 +5,11 @@ File parsing utilities for the AI Project Analyzer.
 import os
 import re
 import logging
-from typing import List
+import csv
+from typing import List, Dict, Any
+from openpyxl import load_workbook  # Only for Excel support
 
-import polars as pl
-
+logger = logging.getLogger(__name__)
 
 def parse_input_file(file_path: str) -> List[str]:
     """
@@ -31,18 +32,29 @@ def parse_input_file(file_path: str) -> List[str]:
     file_ext = os.path.splitext(file_path)[1].lower()
 
     try:
-        # Load the file based on extension
+        data = []
+        columns = []
+        
         if file_ext == ".csv":
-            df = pl.read_csv(file_path)
+            with open(file_path, mode='r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                columns = reader.fieldnames or []
+                data = [row for row in reader]
+                
         elif file_ext in [".xlsx", ".xls"]:
-            df = pl.read_excel(file_path)
+            wb = load_workbook(filename=file_path, read_only=True)
+            sheet = wb.active
+            columns = [cell.value for cell in sheet[1]]  # First row as headers
+            data = []
+            for row in sheet.iter_rows(min_row=2, values_only=True):
+                data.append(dict(zip(columns, row)))
         else:
             raise ValueError(
                 f"Unsupported file type: {file_ext}. Please provide a CSV or Excel file."
             )
 
         # Find columns that might contain GitHub URLs
-        github_columns = find_github_columns(df)
+        github_columns = find_github_columns(columns)
 
         if not github_columns:
             raise ValueError(
@@ -51,7 +63,7 @@ def parse_input_file(file_path: str) -> List[str]:
             )
 
         # Extract URLs from the identified columns
-        urls = extract_github_urls(df, github_columns)
+        urls = extract_github_urls(data, github_columns)
 
         if not urls:
             raise ValueError("No valid GitHub repository URLs found in the file.")
@@ -59,37 +71,34 @@ def parse_input_file(file_path: str) -> List[str]:
         return urls
 
     except Exception as e:
-        logging.error(f"Error parsing file {file_path}: {str(e)}")
+        logger.error(f"Error parsing file {file_path}: {str(e)}")
         raise
 
 
-def find_github_columns(df: pl.DataFrame) -> List[str]:
+def find_github_columns(columns: List[str]) -> List[str]:
     """
-    Find columns in the DataFrame that might contain GitHub URLs.
+    Find columns that might contain GitHub URLs.
 
     Args:
-        df: DataFrame to search for GitHub URL columns.
+        columns: List of column names to search
 
     Returns:
         List of column names that might contain GitHub URLs.
     """
     github_columns = []
-
-    for col in df.columns:
-        # Check if column name contains 'github' or 'Github' or 'Github URL'
-        if re.search(r"(?i)github|github url", str(col)):
+    for col in columns:
+        if col and re.search(r"(?i)github|github url", str(col)):
             github_columns.append(col)
-
     return github_columns
 
 
-def extract_github_urls(df: pl.DataFrame, columns: List[str]) -> List[str]:
+def extract_github_urls(data: List[Dict[str, Any]], columns: List[str]) -> List[str]:
     """
-    Extract GitHub repository URLs from specified columns in a DataFrame.
+    Extract GitHub repository URLs from specified columns in the data.
 
     Args:
-        df: DataFrame containing the data.
-        columns: List of column names to extract GitHub URLs from.
+        data: List of dictionaries containing the row data
+        columns: List of column names to extract GitHub URLs from
 
     Returns:
         List of valid GitHub repository URLs.
@@ -98,19 +107,15 @@ def extract_github_urls(df: pl.DataFrame, columns: List[str]) -> List[str]:
     github_pattern = re.compile(r"https?://(?:www\.)?github\.com/[\w.-]+/[\w.-]+/?")
 
     for col in columns:
-        # Get column as Series and drop nulls
-        series = df.get_column(col)
-        for value in series:
-            value = str(value).strip()
+        for row in data:
+            value = str(row.get(col, "")).strip()
             if match := github_pattern.search(value):
                 url = match.group(0)
-                # Ensure URL doesn't end with unwanted characters
+                # Clean up URL
                 if url.endswith(")") and "(" not in url:
                     url = url[:-1]
-                # Normalize URLs to not have trailing slash
                 if url.endswith("/"):
                     url = url[:-1]
-                # Add to list if not already present
                 if url not in github_urls:
                     github_urls.append(url)
 
