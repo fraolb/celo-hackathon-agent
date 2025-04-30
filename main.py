@@ -4,6 +4,13 @@ AI Project Analyzer - Analyze GitHub projects using LLMs
 """
 
 import sys
+import io
+
+# Fix Windows console encoding
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors="replace")
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors="replace")
+
+import sys
 import argparse
 import logging
 import time
@@ -13,6 +20,7 @@ from src.config import (
     get_default_model,
     get_default_temperature,
     get_default_log_level,
+    get_github_token,
 )
 from src.fetcher import fetch_single_repository
 from src.analyzer import analyze_single_repository, AVAILABLE_MODELS
@@ -84,6 +92,7 @@ def parse_args():
     parser.add_argument(
         "--github-token",
         type=str,
+        default=get_github_token(),
         help="GitHub personal access token for API requests (can also be set with GITHUB_TOKEN env var)",
     )
 
@@ -186,19 +195,19 @@ def main():
         progress_percentage = (completed_repos / total_repos) * 100
         bar_length = 40
         filled_length = int(bar_length * completed_repos // total_repos)
-        progress_bar = "█" * filled_length + "░" * (bar_length - filled_length)
+        progress_bar = "#" * filled_length + "-" * (bar_length - filled_length)
 
         print(f"\n[{progress_bar}] {completed_repos}/{total_repos} ({progress_percentage:.1f}%)")
-        print(f"✅ Completed analysis of: {repo_name}")
+        print(f"Completed analysis of: {repo_name}")
 
         if repo_name in report_paths:
-            print(f"📄 Report: {report_paths[repo_name]}")
+            print(f"Report: {report_paths[repo_name]}")
 
         # Print summary report path on first repo and on updates
         if "__summary__" in report_paths and (
             completed_repos == 1 or completed_repos == total_repos
         ):
-            print(f"📊 Summary report: {report_paths['__summary__']}")
+            print(f"Summary report: {report_paths['__summary__']}")
 
         # Estimate time remaining
         if completed_repos < total_repos:
@@ -209,7 +218,7 @@ def main():
             # Format the time nicely
             mins, secs = divmod(estimated_remaining, 60)
             time_str = f"{int(mins)}m {int(secs)}s"
-            print(f"⏱️  Estimated time remaining: {time_str}")
+            print(f"Estimated time remaining: {time_str}")
 
     # Final stats
     logging.info(f"Completed analysis of {completed_repos}/{total_repos} repositories")

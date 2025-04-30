@@ -16,6 +16,7 @@ GEMINI_API_KEY_ENV = "GOOGLE_API_KEY"
 LOG_LEVEL_ENV = "LOG_LEVEL"
 DEFAULT_MODEL_ENV = "DEFAULT_MODEL"
 TEMPERATURE_ENV = "TEMPERATURE"
+GITHUB_TOKEN="GITHUB_TOKEN"
 
 # Default values
 DEFAULT_LOG_LEVEL = "INFO"
@@ -37,6 +38,24 @@ def get_gemini_api_key() -> str:
     if not api_key:
         raise ValueError(
             f"{GEMINI_API_KEY_ENV} environment variable is not set. "
+            f"Please set it in your .env file or export it directly."
+        )
+    return api_key
+
+def get_github_token() -> str:
+    """
+    Get the Github token from environment variables.
+
+    Returns:
+        str: The Github token
+
+    Raises:
+        ValueError: If the Github token is not set
+    """
+    api_key = os.getenv(GITHUB_TOKEN)
+    if not api_key:
+        raise ValueError(
+            f"{GITHUB_TOKEN} environment variable is not set. "
             f"Please set it in your .env file or export it directly."
         )
     return api_key

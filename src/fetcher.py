@@ -203,6 +203,7 @@ EXCLUDE_PATTERNS = [
     "*.hevc",
     "**/build-info/*",
     "**/solcInputs/*",
+    "lib/",
 ]
 
 
