@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+python-dotenv
+PyGithub
+pandas
+openpyxl
+langchain
+langchain-google-genai
+gitingest
+typer[all]
+rich
+loguru

@@ -24,7 +24,6 @@ from src.config import (
 )
 from src.fetcher import fetch_single_repository
 from src.analyzer import analyze_single_repository, AVAILABLE_MODELS
-from src.reporter import save_single_report, generate_report_directory
 from src.file_parser import parse_input_file
 
 
@@ -52,10 +51,6 @@ def parse_args():
         type=str,
         default="prompts/default.txt",
         help="Path to the prompt file (default: prompts/default.txt)",
-    )
-
-    parser.add_argument(
-        "--output", type=str, default="reports", help="Directory to save reports (default: reports)"
     )
 
     parser.add_argument(
@@ -104,6 +99,14 @@ def parse_args():
     return parser.parse_args()
 
 
+def format_analysis_output(repo_name, analysis, is_json=False):
+    """Format the analysis output for display."""
+    if is_json:
+        return f"{repo_name} Analysis (JSON):\n{analysis}"
+    else:
+        return f"{repo_name} Analysis:\n{analysis}"
+
+
 def main():
     """Main entry point for the application."""
     args = parse_args()
@@ -140,15 +143,10 @@ def main():
     else:
         logging.info("GitHub metrics collection is disabled")
 
-    # Create timestamped directory for reports
-    report_dir = generate_report_directory(args.output)
-    logging.info(f"Reports will be saved to directory: {report_dir}")
-
     # Track total GitHub URLs and completed repositories
     total_repos = len(github_urls)
     completed_repos = 0
     all_analyses = {}
-    all_report_paths = {}
     start_time = time.time()
 
     # Process each repository individually
@@ -179,19 +177,16 @@ def main():
             metrics_data=metrics,
         )
 
-        # Step 3: Save report and update summary
+        # Store analysis and print to user
         completed_repos += 1
         all_analyses[repo_name] = analysis
+        
+        # Print the analysis results directly to the user
+        print("\n" + "="*80)
+        print(format_analysis_output(repo_name, analysis, args.json))
+        print("="*80 + "\n")
 
-        # Save report and update summary
-        report_paths = save_single_report(
-            repo_name, analysis, report_dir, total_repos, completed_repos, all_analyses
-        )
-
-        # Update all report paths
-        all_report_paths.update(report_paths)
-
-        # Print progress indicator and current repository report path
+        # Print progress indicator
         progress_percentage = (completed_repos / total_repos) * 100
         bar_length = 40
         filled_length = int(bar_length * completed_repos // total_repos)
@@ -199,15 +194,6 @@ def main():
 
         print(f"\n[{progress_bar}] {completed_repos}/{total_repos} ({progress_percentage:.1f}%)")
         print(f"Completed analysis of: {repo_name}")
-
-        if repo_name in report_paths:
-            print(f"Report: {report_paths[repo_name]}")
-
-        # Print summary report path on first repo and on updates
-        if "__summary__" in report_paths and (
-            completed_repos == 1 or completed_repos == total_repos
-        ):
-            print(f"Summary report: {report_paths['__summary__']}")
 
         # Estimate time remaining
         if completed_repos < total_repos:
@@ -227,14 +213,15 @@ def main():
         logging.error("No repositories were successfully analyzed. Exiting.")
         return 1
 
-    # Print final report paths summary
-    print("\nAnalysis reports saved to:")
-    for repo_name, path in all_report_paths.items():
-        if repo_name != "__summary__":
-            print(f"- {repo_name}: {path}")
-
-    if "__summary__" in all_report_paths:
-        print(f"\nSummary report: {all_report_paths['__summary__']}")
+    # Print summary of all analyses
+    print("\n" + "="*80)
+    print("SUMMARY OF ALL ANALYSES")
+    print("="*80)
+    for repo_name, analysis in all_analyses.items():
+        print("\n" + "-"*40)
+        print(f"Repository: {repo_name}")
+        print("-"*40)
+        print(format_analysis_output(repo_name, analysis, args.json))
 
     # Print execution time
     total_time = time.time() - start_time
@@ -242,8 +229,10 @@ def main():
     print(f"\nTotal execution time: {int(mins)} minutes, {int(secs)} seconds")
 
     logging.info("Analysis complete!")
-    return 0
+    return all_analyses  # Return the analyses dictionary
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # When run directly, we'll print the results and exit with status code
+    result = main()
+    sys.exit(0 if result else 1)
