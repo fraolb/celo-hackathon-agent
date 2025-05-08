@@ -33,7 +33,7 @@ app = FastAPI()
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "https://your-nextjs-app.vercel.app"],
+    allow_origins=["http://localhost:3000", "https://gitspect.vercel.app/"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
